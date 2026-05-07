@@ -8,12 +8,12 @@ import (
 )
 
 func TestEnrollmentEndpoint(t *testing.T) {
-	req, err := http.NewRequest("GET", "/enroll", nil)
+	req, err := http.NewRequest("GET", "/enroll", nil) // std::expected<T, Error>
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	rr := httptest.NewRecorder()
+	rr := httptest.NewRecorder() // MockHttpResponse response;
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Enrollment endpoint hit!")
 	})

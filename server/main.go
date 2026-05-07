@@ -7,7 +7,7 @@ import (
 
 func main() {
 	http.HandleFunc("/enroll", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Enrollment endpoint hit!")
+		fmt.Fprintf(w, "Enrollment successful")
 	})
 
 	fmt.Println("Server listening on :8443")

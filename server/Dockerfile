@@ -18,10 +18,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 COPY --from=builder /app/enrollment-server .
+COPY . .
 
 # Enrollment port
 EXPOSE 8443
 # mTLS communication port
 EXPOSE 8444
 
-# No CMD needed as tests will be run ephemerally
+# Final stage needs a binary to run
+CMD ["./enrollment-server"]
