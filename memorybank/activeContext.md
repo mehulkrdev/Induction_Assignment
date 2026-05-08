@@ -2,40 +2,37 @@
 
 ## Current Focus
 
-- Establishing Test Driven Development (TDD) workflow
-- Writing minimal test cases for agent-server interaction
-- Fixing environment and path-related issues
-- Ensuring correct execution boundaries (Windows vs WSL vs Docker)
+- Transitioning from minimal connection to secure enrollment logic
+- Expanding TDD to cover discovery and authenticated enrollment
+- Maintaining strict environment separation (Windows vs WSL vs Docker)
 
 ## Current State
 
-- Rust agent project created on Windows
-- Cargo setup working with MSVC toolchain
-- Docker successfully running inside WSL Debian
-- Go server test environment working inside Docker
-- Basic placeholder test executed inside Docker container
-- Initial Rust test setup started
+- Successful transport-layer connection between Windows Rust agent and Dockerized Go server
+- Go server implements a minimal `/enroll` endpoint on port 8443
+- Rust agent integration test successfully validates connection and response from the server
+- Go unit tests run in ephemeral containers (`docker compose run --rm`)
+- Rust integration tests run against a persistent container (`docker compose up -d`)
+- `Dockerfile` updated to support both integration and unit testing
 
 ## Known Issues
 
-- Path confusion between Windows and WSL environments
-- Cline not correctly identifying working directories
-- Need to enforce strict execution rules via memory-bank
+- Need to ensure Go server is fully started before running Rust integration tests
+- Managing Docker lifecycle (up/down) during the test-implement-refactor cycle
 
 ## Immediate Next Steps
 
-1. Use Cline to generate minimal test cases
-2. Validate Rust agent test execution from correct directory
-3. Ensure Go tests run only inside Docker
-4. Define connection test (agent → localhost:8443)
-5. Expand toward enrollment flow tests
+1. Implement server-side mDNS discovery (Stage 1)
+2. Implement BEB verification on the agent (Stage 2)
+3. Expand `/enroll` to accept and validate HMAC-SHA256 tokens (Stage 3)
+4. Ensure all new logic is preceded by failing tests
 
 ## Short-Term Goals
 
-- Agent connection test (failing)
-- Basic enrollment request test
-- Server-side handler test (mocked)
-- Establish clear test structure on both sides
+- [x] Agent connection test
+- Basic enrollment request test with token validation
+- Server-side discovery (mDNS) implementation
+- Agent-side server verification (BEB)
 
 ## Long-Term Direction
 

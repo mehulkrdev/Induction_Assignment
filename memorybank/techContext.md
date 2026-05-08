@@ -27,11 +27,14 @@
 - Docker → Container runtime for Go server
 - Go → Only inside Docker container
 - WSL → Linux environment bridge
+- Reqwest → HTTP client for Rust agent
 
 ## Execution Rules
 
 - Rust commands (cargo build/test) MUST run on Windows inside agent folder
 - Go code MUST NOT be executed directly on Windows
+- Go Unit Tests: Use ephemeral containers (`docker compose run --rm server go test -v ./...`)
+- Rust Integration Tests: Use persistent container (`docker compose up -d server`) and ensure `wsl sleep 5` before execution.
 - Go tests MUST run inside Docker container only
 - Docker commands run inside WSL Debian
 

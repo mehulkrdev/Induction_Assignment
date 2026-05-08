@@ -46,8 +46,8 @@ Agent (Windows) → localhost:8443 → Docker Container (Go Server)
 - Agent validates server identity using BEB
 
 ### Stage 3: Enrollment
-- Agent connects to port 8443
-- Sends enrollment request with token
+- [x] Agent connects to port 8443
+- Sends enrollment request with token (In progress)
 
 ### Stage 4: Certificate Issuance
 - Server validates token

@@ -43,27 +43,36 @@ services:
       dockerfile: Dockerfile
 ```
 
-### **Go Test Execution Strategy:**
+### **Go Test Execution Strategy (Unit Tests):**
 
-To adhere to the TDD principles and ensure an isolated, ephemeral testing environment for the Go server, tests are executed using `docker compose run`.
+To adhere to the TDD principles and ensure an isolated, ephemeral testing environment for the Go server, unit tests are executed using `docker compose run`.
 
 *   **Command**: `wsl docker compose run --rm server go test -v ./...`
     *   `wsl`: Executes the command within the Windows Subsystem for Linux environment.
     *   `docker compose run`: Runs a one-off command in a new container.
     *   `--rm`: Automatically removes the container after it exits.
     *   `server`: Specifies the service defined in `docker-compose.yml` to use.
-    *   `go test -v ./...`: The command executed inside the container. This runs all tests in the current module (`.`) with verbose output (`-v`). The current working directory inside the container is `/app` due to `WORKDIR /app` in the `Dockerfile`.
+    *   `go test -v ./...`: Runs unit tests inside the ephemeral container.
+    *   **Context**: The `Dockerfile` copies all files into `/app` to support this execution.
 
 This strategy ensures that:
 *   Each test run happens in a clean, isolated environment.
 *   No persistent server instance is running during testing.
 *   All necessary Go module files (like `go.mod`) are available in the correct context within the container for `go test` to function correctly.
 
-## Rust Agent Test Execution Strategy
+## Rust Agent Test Execution Strategy (Integration Tests)
 
-### **Command:** `cargo test --manifest-path agent/Cargo.toml`
+Rust tests that depend on the Go server are treated as integration tests and require the server to be running.
 
-*   `cargo test`: Executes the tests defined in the Rust project.
-*   `--manifest-path agent/Cargo.toml`: Specifies the path to the `Cargo.toml` file for the `agent` project, ensuring tests are run for the correct project on the Windows host.
+### **Command Sequence:**
 
-This strategy ensures that Rust agent tests are executed directly on the Windows environment, as required, and targets the correct project.
+1.  `wsl docker compose up -d server`
+2.  `wsl sleep 5` (Allow server to initialize)
+3.  `cargo test --manifest-path agent/Cargo.toml`
+4.  `wsl docker compose down`
+
+*   `wsl docker compose up -d server`: Starts the Go server container in the background.
+*   `cargo test`: Executes the Rust tests on Windows.
+*   `wsl docker compose down`: Cleans up the environment after testing.
+
+This strategy ensures that the Rust agent can communicate with a live Go server running in the Dockerized WSL environment.
