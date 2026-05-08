@@ -10,7 +10,7 @@ Assignment/
 │   ├── Cargo.toml                # Rust project manifest and dependencies
 │   └── src/                      # Rust source code and tests
 │       ├── lib.rs                # Library code with core logic and tests
-│       └── main.rs               # Main application entry point
+│       └── main.rs               # Main application entry point (No longer in use, lib.rs now contains all core logic)
 │
 ├── server/                       # Go server project (WSL/Docker)
 │   ├── Dockerfile                # Dockerfile for building the Go server image

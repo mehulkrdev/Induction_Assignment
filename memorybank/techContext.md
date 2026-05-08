@@ -28,8 +28,8 @@
 - Go → Only inside Docker container
 - WSL → Linux environment bridge
 - Reqwest → HTTP client for Rust agent
-- Chrono/OnceCell → Rust logging dependencies (now centralized under `logger/client`)
-- Go logger is now centralized under `logger/server`
+- Chrono/OnceCell → Rust logging dependencies (now centralized under `logger/client` and implemented)
+- Go logger is now centralized under `logger/server` and implemented
 
 ## Execution Rules
 

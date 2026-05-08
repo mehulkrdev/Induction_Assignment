@@ -47,7 +47,7 @@ Agent (Windows) → localhost:8443 → Docker Container (Go Server)
 
 ### Stage 3: Enrollment
 - [x] Agent connects to port 8443
-- Sends enrollment request with token (In progress)
+- Sends enrollment request with token (Implemented and tested)
 
 ### Stage 4: Certificate Issuance
 - Server validates token
