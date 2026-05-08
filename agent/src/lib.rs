@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+#[macro_use]
+#[path = "../../logger/client/logger.rs"]
+pub mod logger;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // this statements help to automatically creates necessary function needed to safely transfer owenrhip of the object of this struct
 pub struct EnrollmentRequest {
@@ -51,9 +54,20 @@ Very common Rust optimization pattern.
 mod tests {
     use super::*;
     use reqwest;
+    use crate::logger;
+    use std::fs::File;
+
+    // Helper to create a dummy log file for tests
+    fn setup_test_logger() -> File {
+        let path = std::env::temp_dir().join(format!("test_agent_log_{}.log", chrono::Local::now().format("%Y%m%d%H%M%S")));
+        File::create(&path).expect("Failed to create test log file")
+    }
 
     #[tokio::test]
     async fn test_agent_enrollment_post_success() {
+        let _guard = logger::set_log_file_for_tests(setup_test_logger());
+        log_entry!("Starting test_agent_enrollment_post_success");
+
         let client = reqwest::Client::new();
         let request = EnrollmentRequest {
             enrollment_token: "valid-token".to_string(),
@@ -68,12 +82,15 @@ mod tests {
         
         assert!(res.is_ok(), "Agent failed to send POST request to the server");
         let res = res.unwrap();
-        // This will fail because the server currently returns 501
+        log_entry!("Server response status: {}", res.status());
         assert_eq!(res.status(), reqwest::StatusCode::OK, "Server did not return 200 OK");
     }
 
     #[tokio::test]
     async fn test_agent_enrollment_invalid_token_401() {
+        let _guard = logger::set_log_file_for_tests(setup_test_logger());
+        log_entry!("Starting test_agent_enrollment_invalid_token_401");
+
         let client = reqwest::Client::new();
         let request = EnrollmentRequest {
             enrollment_token: "invalid-token".to_string(),
@@ -88,12 +105,15 @@ mod tests {
         
         assert!(res.is_ok());
         let res = res.unwrap();
-        // This will fail because the server currently returns 501
+        log_entry!("Server response status: {}", res.status());
         assert_eq!(res.status(), reqwest::StatusCode::UNAUTHORIZED, "Server did not return 401 Unauthorized");
     }
 
     #[tokio::test]
     async fn test_agent_enrollment_malformed_request_400() {
+        let _guard = logger::set_log_file_for_tests(setup_test_logger());
+        log_entry!("Starting test_agent_enrollment_malformed_request_400");
+
         let client = reqwest::Client::new();
         // Sending empty agent_id which should trigger 400
         let request = EnrollmentRequest {
@@ -109,7 +129,7 @@ mod tests {
         
         assert!(res.is_ok());
         let res = res.unwrap();
-        // This will fail because the server currently returns 501
+        log_entry!("Server response status: {}", res.status());
         assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST, "Server did not return 400 Bad Request");
     }
 }

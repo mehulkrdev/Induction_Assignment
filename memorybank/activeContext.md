@@ -2,6 +2,7 @@
 
 ## Current Focus
 
+- Refactored and centralized runtime-scoped append-only logging system for both Rust and Go
 - Transitioning from minimal connection to secure enrollment logic
 - Expanding TDD to cover discovery and authenticated enrollment
 - Maintaining strict environment separation (Windows vs WSL vs Docker)
@@ -13,6 +14,7 @@
 - All Go unit tests (POST /enroll validation) are PASSING in ephemeral containers
 - All Rust integration tests (POST /enroll status handling) are PASSING against the running server
 - Environment isolation is strictly maintained
+- Logging system uses `DD-MM-YYYY_HH:MM` format and captures filename/line numbers
 
 ## Known Issues
 

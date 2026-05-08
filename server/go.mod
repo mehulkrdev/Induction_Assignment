@@ -1,4 +1,4 @@
-module enrollment-server
+module Assignment
 
 go 1.21
 

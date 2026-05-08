@@ -5,14 +5,23 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+
+	"Assignment/logger/server"
 )
 
-func TestEnrollmentEndpoint(t *testing.T) {
-	// Re-using the logic from main.go"s handler but for testing
-	// In TDD, we want to test the handler. Since main.go has an anonymous handler,
-	// we"ll likely need to refactor main.go later. For now, we test against the intended behavior.
+func TestMain(m *testing.M) {
+	// Initialize logger for tests
+	logger.InitLogger("test-server")
 
+	exitCode := m.Run()
+
+	logger.CleanupLogDir()
+	os.Exit(exitCode)
+}
+
+func TestEnrollmentEndpoint(t *testing.T) {
 	t.Run("Valid Enrollment Request", func(t *testing.T) {
 		reqBody, _ := json.Marshal(EnrollmentRequest{
 			EnrollmentToken: "valid-token",
@@ -22,12 +31,7 @@ func TestEnrollmentEndpoint(t *testing.T) {
 		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
 		rr := httptest.NewRecorder()
 
-		// This will call the actual handler once we refactor. 
-		// For RED phase, we are testing against what we WANT.
-		// Since main.go doesn"t export the handler, I"ll mock the call to the endpoint
-		// as if it were processed by the server logic we"re about to write.
-		
-		handler := http.HandlerFunc(EnrollmentHandler) // We expect to implement this
+		handler := http.HandlerFunc(EnrollmentHandler)
 		handler.ServeHTTP(rr, req)
 
 		if status := rr.Code; status != http.StatusOK {

@@ -18,6 +18,12 @@ Assignment/
 │   ├── main.go                   # Go server main application code
 │   └── enrollment_test.go        # Go server test files
 │
+├── logger/                       # Centralized logging for all components
+│   ├── client/                   # Rust client logger
+│   │   └── logger.rs             # Rust logging implementation
+│   └── server/                   # Go server logger
+│       └── logger.go             # Go logging implementation
+│
 ├── docker-compose.yml            # Docker Compose configuration for the Go server
 ├── bootstrap-bundle.json         # Shared trust bundle for enrollment
 └── memorybank/                   # Project documentation and context

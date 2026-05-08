@@ -2,11 +2,12 @@
 FROM golang:1.21-bookworm AS builder
 
     WORKDIR /app
-    COPY go.mod ./
+    COPY server/go.mod ./
     # go.sum will be generated if missing
     RUN go mod download
 
-COPY . .
+COPY server/. .
+COPY logger/server/logger.go ./pkg/logger/
 RUN go build -o enrollment-server .
 
 # Final stage

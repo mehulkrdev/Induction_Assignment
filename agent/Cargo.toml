@@ -25,6 +25,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.13.3", features = ["json"] }
 
+# Logging utilities
+chrono = "0.4"
+once_cell = "1.18"
+
 # Mocking for TDD
 [dev-dependencies]
 mockall = "0.11"
