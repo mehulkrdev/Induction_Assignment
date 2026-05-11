@@ -8,9 +8,7 @@ services:
     ports:
       - "8443:8443"
       - "8444:8444"
-      - "5353:5353/udp" # mDNS
     environment:
-      - SERVER_HMAC_TOKEN=placeholder-token
     networks:
       - enrollment-net
 

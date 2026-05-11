@@ -3,7 +3,6 @@ module Assignment
 go 1.21
 
 require (
-	github.com/hashicorp/mdns v1.0.5
 	github.com/stretchr/testify v1.8.4
 )
 

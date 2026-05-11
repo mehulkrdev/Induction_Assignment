@@ -33,13 +33,13 @@
 - [x] Agent connection test
 - [x] Basic enrollment request test with token validation (RED Phase complete)
 - [x] Basic enrollment request implementation (GREEN Phase complete)
+- [x] Secure HTTPS enrollment with ECDSA P-256 certificate issuance and persistence
 - Server-side discovery (mDNS) implementation
 - Agent-side server verification (BEB)
 
 ## Long-Term Direction
 
-- Implement enrollment logic after tests
-- Add TLS and certificate handling
+- [x] Add TLS and certificate handling (HTTPS Enrollment)
 - Transition to mTLS communication
 - Integrate full backup/storage workflow
 

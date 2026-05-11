@@ -27,9 +27,10 @@
 - Docker → Container runtime for Go server
 - Go → Only inside Docker container
 - WSL → Linux environment bridge
-- Reqwest → HTTP client for Rust agent
+- Reqwest → HTTP client for Rust agent (with `rustls-tls` for HTTPS)
 - Chrono/OnceCell → Rust logging dependencies (now centralized under `logger/client` and implemented)
 - Go logger is now centralized under `logger/server` and implemented
+- P256/PKCS8 → Rust dependencies for ECDSA P-256 key generation
 
 ## Execution Rules
 
@@ -43,11 +44,11 @@
 ## Networking
 
 - Server exposed via Docker:
-  localhost:8443 → Enrollment
+  localhost:8443 → Enrollment (HTTPS)
   localhost:8444 → mTLS communication
 
 - Rust agent connects using:
-  http://localhost:8443
+  https://localhost:8443
 
 ## Constraints
 
