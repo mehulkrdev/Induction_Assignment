@@ -1,30 +1,33 @@
-# Build stage
 FROM golang:1.21-bookworm AS builder
 
-    WORKDIR /app
-    COPY server/go.mod ./
-    # go.sum will be generated if missing
-    RUN go mod download
+WORKDIR /app
 
-COPY server/. .
-COPY logger/server/logger.go ./pkg/logger/
-RUN go build -o enrollment-server .
+COPY server/go.mod ./server/go.mod
 
-# Final stage
-FROM golang:1.21-bookworm
+WORKDIR /app/server
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN go mod download
 
 WORKDIR /app
-COPY --from=builder /app/enrollment-server .
+
 COPY . .
 
-# Enrollment port
+RUN mkdir -p /app/server/pkg/logger
+COPY logger/server/logger.go /app/server/pkg/logger/logger.go
+
+WORKDIR /app/server
+
+RUN go build -o enrollment-server .
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/server/enrollment-server .
+
 EXPOSE 8443
-# mTLS communication port
 EXPOSE 8444
 
-# Final stage needs a binary to run
 CMD ["./enrollment-server"]
