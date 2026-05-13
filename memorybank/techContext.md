@@ -10,8 +10,7 @@
 ### Windows (Host)
 - Runs Rust agent
 - Uses Cargo for build and test
-- Path:
-  C:\Users\Mehul Kumar\Documents\IDrive_Codebase\Assignment\agent
+- Path: `agent/`
 
 ### WSL Debian
 - Linux environment inside Windows
@@ -28,9 +27,11 @@
 - Go → Only inside Docker container
 - WSL → Linux environment bridge
 - Reqwest → HTTP client for Rust agent (with `rustls-tls` for HTTPS)
-- Chrono/OnceCell → Rust logging dependencies (now centralized under `logger/client` and implemented)
-- Go logger is now centralized under `logger/server` and implemented
-- P256/PKCS8 → Rust dependencies for ECDSA P-256 key generation
+- Chrono/OnceCell → Rust logging dependencies (centralized under `logger/client`)
+- Go logger → Go logging implementation (centralized under `logger/server`)
+- p256/pkcs8 → Rust crates for ECDSA P-256 key generation and PEM encoding
+- reqwest → Rust HTTP client with `rustls-tls` for secure communication
+- crypto/tls, crypto/x509 → Go standard libraries for TLS and certificate handling
 
 ## Execution Rules
 

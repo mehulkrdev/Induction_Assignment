@@ -2,50 +2,51 @@
 
 ## Current Focus
 
-- Refactored and centralized runtime-scoped append-only logging system for both Rust and Go
-- Fully implemented secure enrollment logic, including token validation and logging
-- Expanding TDD to cover discovery and authenticated enrollment
-- Maintaining strict environment separation (Windows vs WSL vs Docker)
+- Maintenance and verification of the secure enrollment and mTLS communication system.
+- Ensuring strict environment separation and robust error handling during the enrollment flow.
+- Maintaining the centralized runtime-scoped append-only logging system for both Rust and Go.
 
 ## Current State
 
-- Successful transport-layer connection between Windows Rust agent and Dockerized Go server
-- Go server now implements POST /enroll with JSON payload parsing and validation
-- All Go unit tests (POST /enroll validation) are PASSING in ephemeral containers
-- All Rust integration tests (POST /enroll status handling) are PASSING against the running server
-- Environment isolation is strictly maintained
-- Logging system uses `DD-MM-YYYY_HH:MM` format and captures filename/line numbers
+- **Fully implemented** secure enrollment logic:
+    - Rust agent generates ECDSA P-256 keypairs.
+    - Go server validates HMAC-based tokens and signs agent public keys.
+    - Agent persists the issued certificate and private key.
+- **Fully implemented** mTLS communication:
+    - Agent uses its certificate and key for authenticated requests on port 8444.
+    - Go server verifies agent identity via mTLS.
+- **Successful integration tests**:
+    - Rust integration tests (`enrollment_test.rs`) verify the complete flow: Enrollment -> Persistence -> Reconnection (mTLS).
+    - Go unit tests (`enrollment_test.go`) verify endpoint validation and certificate signing logic.
+- **Centralized Logging**: Centralized logging system implemented and used across all components with `DD-MM-YYYY_HH:MM` format.
 
 ## Known Issues
 
-- Need to ensure Go server is fully started before running Rust integration tests
-- Managing Docker lifecycle (up/down) during the test-implement-refactor cycle
+- The server initialization delay (`wsl sleep 5`) is necessary for Dockerized Go server to be ready before Rust integration tests start.
 
 ## Immediate Next Steps
 
-1. Implement server-side mDNS discovery (Stage 1)
-2. Implement BEB verification on the agent (Stage 2)
-3. Expand `/enroll` to accept and validate HMAC-SHA256 tokens (Stage 3)
-4. Ensure all new logic is preceded by failing tests
+1. Maintain and monitor the system for any edge cases in certificate handling.
+2. Ensure any new features follow the established TDD patterns.
 
-## Short-Term Goals
+## Completed Milestones
 
 - [x] Agent connection test
-- [x] Basic enrollment request test with token validation (RED Phase complete)
-- [x] Basic enrollment request implementation (GREEN Phase complete)
+- [x] Basic enrollment request test with token validation
+- [x] Basic enrollment request implementation
 - [x] Secure HTTPS enrollment with ECDSA P-256 certificate issuance and persistence
-- Server-side discovery (mDNS) implementation
-- Agent-side server verification (BEB)
+- [x] mTLS communication implementation (Port 8444)
+- [x] Integration of centralized logging system
+- [x] Full end-to-end integration test (Enrollment + mTLS)
 
 ## Long-Term Direction
 
-- [x] Add TLS and certificate handling (HTTPS Enrollment)
-- Transition to mTLS communication
-- Integrate full backup/storage workflow
+- Integrate full backup/storage workflow over the established mTLS channel.
+- Implement server-side mDNS discovery for automated agent discovery.
 
 ## Important Reminders
 
-- Do NOT implement logic before tests
-- Always verify working directory before running commands
-- Keep tests minimal and focused
-- Maintain separation of environments at all times
+- Do NOT implement logic before tests.
+- Always verify working directory before running commands.
+- Keep tests minimal and focused.
+- Maintain separation of environments at all times.
