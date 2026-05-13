@@ -6,31 +6,34 @@ This document outlines the repository structure and the strategy for executing T
 
 ```
 Assignment/
-├── agent/                        # Rust agent project (Windows)
-│   ├── Cargo.toml                # Rust project manifest
-│   ├── src/
-│   │   └── lib.rs                # Core agent logic and logger bridge
-│   └── tests/
-│       └── enrollment_test.rs    # Integration tests (Enrollment + mTLS)
+├── Cargo.toml                    # Rust workspace manifest
+├── crates/
+│   ├── agent/                    # Rust agent project (Windows)
+│   │   ├── Cargo.toml            # Agent crate manifest
+│   │   ├── src/
+│   │   │   └── lib.rs            # Core agent logic and integration tests (Enrollment + mTLS)
+│   └── agent_logger/             # Rust agent logging crate
+│       ├── Cargo.toml            # Logger crate manifest
+│       └── src/
+│           └── lib.rs            # Rust logging implementation
 │
 ├── server/                       # Go server project (WSL/Docker)
 │   ├── Dockerfile                # Server container definition
 │   ├── go.mod                    # Go module definition
 │   ├── main.go                   # Server entry point and handlers
 │   ├── pkg/
-│   │   └── certutil/             # Certificate generation and signing logic
+│   │   ├── certutil/             # Certificate generation and signing logic
+│   │   └── logger/               # Go server logging implementation
 │   └── tests/
 │       └── enrollment_test.go    # Go unit tests for enrollment logic
-│
-├── logger/                       # Centralized logging implementation
-│   ├── client/
-│   │   └── logger.rs             # Rust logging implementation
-│   └── server/
-│       └── logger.go             # Go logging implementation
 │
 ├── docker-compose.yml            # Docker orchestration for the server
 ├── bootstrap-bundle.json         # (Optional) Future discovery data
 ├── ca.crt                        # Generated CA certificate (Shared trust)
+├── server.crt                    # Generated Server Certificate
+├── server.key                    # Generated Server Private Key
+├── agent.crt                     # Generated Agent Certificate
+├── agent.key                     # Generated Agent Private Key
 └── memorybank/                   # Project documentation
 ```
 
@@ -55,7 +58,7 @@ Integration tests verify the end-to-end flow between the Windows host and the Do
 
 1.  `wsl docker compose up -d server`
 2.  `wsl sleep 5` (Allow server to initialize and generate `ca.crt`)
-3.  `cargo test --manifest-path agent/Cargo.toml`
+3.  `cargo test --workspace --test enrollment_test`
 4.  `wsl docker compose down`
 
 *   **Context**: The agent reads `ca.crt` from the root directory (shared volume or local copy) to establish trust.

@@ -4,7 +4,7 @@
 
 - Maintenance and verification of the secure enrollment and mTLS communication system.
 - Ensuring strict environment separation and robust error handling during the enrollment flow.
-- Maintaining the centralized runtime-scoped append-only logging system for both Rust and Go.
+- Maintaining separate logging implementations for Rust and Go to ensure clean language boundaries.
 
 ## Current State
 
@@ -18,7 +18,7 @@
 - **Successful integration tests**:
     - Rust integration tests (`enrollment_test.rs`) verify the complete flow: Enrollment -> Persistence -> Reconnection (mTLS).
     - Go unit tests (`enrollment_test.go`) verify endpoint validation and certificate signing logic.
-- **Centralized Logging**: Centralized logging system implemented and used across all components with `DD-MM-YYYY_HH:MM` format.
+- **Isolated Logging**: Decentralized logging system implemented with separate Go (`server/pkg/logger`) and Rust (`crates/agent_logger`) implementations, maintaining identical log formats and directory structures.
 
 ## Known Issues
 
@@ -38,6 +38,7 @@
 - [x] mTLS communication implementation (Port 8444)
 - [x] Integration of centralized logging system
 - [x] Full end-to-end integration test (Enrollment + mTLS)
+- [x] Resolved incorrect cross-language module integration between Rust and Go.
 
 ## Long-Term Direction
 

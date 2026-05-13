@@ -7,10 +7,11 @@ use once_cell::sync::OnceCell;
 pub static LOG_DIR: OnceCell<PathBuf> = OnceCell::new();
 pub static LOG_FILE: OnceCell<std::fs::File> = OnceCell::new();
 
+const LOG_ROOT_DIR: &str = "C:/Assignment/Logs";
+
 pub fn init_logger(component_name: &str) -> io::Result<()> {
     LOG_DIR.get_or_try_init(|| {
-        let assignment_root = std::env::current_dir()?;
-        let logs_root = assignment_root.join("logs");
+        let logs_root = PathBuf::from(LOG_ROOT_DIR);
 
         fs::create_dir_all(&logs_root)?;
 
@@ -27,7 +28,7 @@ pub fn init_logger(component_name: &str) -> io::Result<()> {
 
         LOG_FILE.set(file).map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to set log file"))?;
         Ok(log_run_dir)
-    }).map(|_| ()) // Return an empty Ok once initialized
+    }).map(|_| ()) 
 }
 
 pub fn cleanup_log_dir() {

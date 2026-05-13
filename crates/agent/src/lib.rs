@@ -5,9 +5,7 @@ use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
 
-#[macro_use]
-#[path = "../../logger/client/logger.rs"]
-pub mod logger;
+use enrollment_agent_logger as logger;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnrollmentRequest {

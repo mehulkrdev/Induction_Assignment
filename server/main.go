@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	"Assignment/pkg/logger"
-	"Assignment/pkg/certutil"
+	"github.com/mehulkrdev/Assignment/server/pkg/logger"
+	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
 )
 
 var (

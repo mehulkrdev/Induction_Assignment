@@ -24,15 +24,18 @@ The system follows a client-server architecture with strict environment separati
 - Communication uses standard HTTP/TLS protocols.
 
 ### 2. Enrollment Pattern
-- Initial trust bootstrapping via `ca.crt`.
-- HMAC-based token authentication for enrollment.
-- ECDSA P-256 keypair generation on the agent.
-- Server-side public key signing and certificate issuance.
+- **Initial Trust (Bootstrapping)**: The Rust agent established trust by reading the server-generated `ca.crt`. This root certificate is used to validate the server's certificate during HTTPS enrollment.
+- **Agent Identity Generation**: Upon starting enrollment, the agent generates an ECDSA P-256 keypair (`agent.key` and its corresponding public key).
+- **Secure Enrollment Request**: The agent sends a POST request to `https://localhost:8443/enroll`. The request body includes the `enrollment_token`, `agent_id`, and the PEM-encoded `public_key`.
+- **Server Validation and Signing**: The Go server validates the enrollment token. If valid, it signs the agent's public key using the internal CA and returns a PEM-encoded client certificate (`agent.crt`).
+- **Certificate Persistence**: The agent persists both the private key (`agent.key`) and the issued certificate (`agent.crt`) locally for subsequent mTLS communication.
 
 ### 3. Mutual TLS (mTLS) Pattern
-- Ongoing communication requires valid client and server certificates.
-- Server validates client certificate against the internal CA.
-- Agent validates server certificate using the same CA.
+- **mTLS Reconnection**: After successful enrollment, the agent uses its persisted `agent.crt` and `agent.key` to establish a mutual TLS connection with the server on port 8444.
+- **Bi-directional Verification**:
+    - **Server-side**: The server requires a client certificate and verifies it against the `ca.crt` pool.
+    - **Agent-side**: The agent verifies the server's certificate using the same `ca.crt`.
+- **Authenticated Communication**: Successful mTLS negotiation allows the agent to access protected endpoints like `/secure`.
 
 ### 4. Environment Isolation Pattern
 - Agent runs on Windows.
@@ -52,16 +55,20 @@ The system follows a client-server architecture with strict environment separati
 - Agent validates server identity using `ca.crt` (Bootstrap trust).
 
 ### Stage 3: Enrollment (Implemented)
-- Agent connects to port 8443 via HTTPS.
-- Agent sends enrollment request with HMAC token and public key.
-- Server validates token and signs the public key.
+- Agent initiates an HTTPS connection to port 8443.
+- Agent generates an ECDSA P-256 keypair.
+- Agent sends a POST request with `enrollment_token`, `agent_id`, and its PEM-encoded public key.
+- Server validates the token and signs the public key with its internal CA.
 
 ### Stage 4: Certificate Persistence (Implemented)
-- Agent saves the issued certificate (`agent.crt`) and private key (`agent.key`).
+- Agent receives the signed certificate from the server.
+- Agent persists both the private key (`agent.key`) and the certificate (`agent.crt`) to the local file system.
 
 ### Stage 5: Secure mTLS Communication (Implemented)
-- Agent reconnects using the persisted identity on port 8444.
-- Server verifies client certificate and grants access to `/secure`.
+- Agent establishes a new connection to port 8444 using its mTLS identity (`agent.crt`, `agent.key`).
+- Server mandates and verifies the client certificate.
+- Agent verifies the server certificate using `ca.crt`.
+- Secure, bi-directionally authenticated communication is established.
 
 ## Constraints
 

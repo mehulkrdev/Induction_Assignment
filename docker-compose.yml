@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   server:
     build:
@@ -8,9 +6,5 @@ services:
     ports:
       - "8443:8443"
       - "8444:8444"
-    networks:
-      - enrollment-net
-
-networks:
-  enrollment-net:
-    driver: bridge
+    volumes:
+      - /mnt/c/Assignment/Logs:/Assignment/Logs
