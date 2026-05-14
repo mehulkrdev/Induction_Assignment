@@ -4,67 +4,69 @@ This document outlines the repository structure and the strategy for executing T
 
 ## Repository Layout
 
-```
+```text
 Assignment/
+├── .clinerules.md                # Project-wide architectural and operational guidelines
 ├── Cargo.toml                    # Rust workspace manifest
 ├── crates/
-│   ├── agent/                    # Rust agent project (Windows)
+│   ├── agent/                    # Rust Agent Project (Windows Native)
 │   │   ├── Cargo.toml            # Agent crate manifest
 │   │   ├── src/
-│   │   │   └── lib.rs            # Core agent logic and integration tests (Enrollment + mTLS)
-│   └── agent_logger/             # Rust agent logging crate
+│   │   │   └── lib.rs            # Core agent logic (key management, enrollment, mTLS client)
+│   │   └── tests/
+│   │       └── enrollment_test.rs    # Rust integration tests (end-to-end with Go server)
+│   │
+│   └── agent_logger/             # Rust Logging Crate
 │       ├── Cargo.toml            # Logger crate manifest
 │       └── src/
-│           └── lib.rs            # Rust logging implementation
+│           └── lib.rs            # Rust-specific logging implementation
 │
-├── server/                       # Go server project (WSL/Docker)
-│   ├── Dockerfile                # Server container definition
-│   ├── go.mod                    # Go module definition
-│   ├── main.go                   # Server entry point and handlers
+├── server/                       # Go Server Project (WSL/Docker Containerized)
+│   ├── Dockerfile                # Defines the Go server's Docker image
+│   ├── go.mod                    # Go module definition and dependencies
+│   ├── go.sum                    # Checksums for Go module dependencies
+│   ├── main.go                   # Server entry point, HTTP/mTLS handlers, CA management
 │   ├── pkg/
-│   │   ├── certutil/             # Certificate generation and signing logic
-│   │   └── logger/               # Go server logging implementation
+│   │   ├── certutil/             # Go package for certificate generation, signing, and PEM operations
+│   │   └── logger/               # Go package for server-side logging implementation
 │   └── tests/
-│       └── enrollment_test.go    # Go unit tests for enrollment logic
+│       └── enrollment_test.go    # Go unit and integration tests for server-side enrollment logic
 │
-├── docker-compose.yml            # Docker orchestration for the server
-├── bootstrap-bundle.json         # (Optional) Future discovery data
-├── ca.crt                        # Generated CA certificate (Shared trust)
-├── server.crt                    # Generated Server Certificate
-├── server.key                    # Generated Server Private Key
-├── agent.crt                     # Generated Agent Certificate
-├── agent.key                     # Generated Agent Private Key
-└── memorybank/                   # Project documentation
+├── docker-compose.yml            # Orchestrates the Go server Docker container
+├── README.md                     # Project overview, setup, and execution instructions
+├── memorybank/                   # Project documentation and architectural context
+│   ├── activeContext.md          # Active development notes and decisions
+│   ├── productContext.md         # Product-level requirements and vision
+│   ├── projectbrief.md           # High-level project summary
+│   ├── repositoryStructure.md    # Details on repository layout and test execution
+│   ├── systemPatterns.md         # Core architectural patterns and reliability aspects
+│   └── techContext.md            # Technical stack, environments, and execution rules
+│
+├── bootstrap-bundle.json         # (Optional) Placeholder for future discovery/bootstrap data
+├── ca.crt                        # Server's self-signed CA certificate (shared trust anchor)
+├── server.crt                    # Server's TLS certificate, signed by CA
+├── server.key                    # Server's private key
+├── agent.crt                     # Agent's client certificate, signed by server CA
+├── agent.key                     # Agent's private key
+├── agent.pub                     # Agent's public key
 ```
 
-## Docker Build Context and Test Execution Strategy (Go Server)
+## Go Server Test Execution Strategy (Unit Tests and Integration Tests)
 
-### **Docker Build Context:**
-
-The `docker-compose.yml` file uses the `./server` directory as its build context. The Go server is built and run entirely within this container.
-
-### **Go Test Execution Strategy (Unit Tests):**
-
-Unit tests are executed in ephemeral containers to ensure isolation.
-
+*   **Environment**: All Go tests (unit and integration) are executed strictly within isolated Docker containers via WSL.
 *   **Command**: `wsl docker compose run --rm server go test -v ./...`
-*   **Purpose**: Validates enrollment handlers, JSON parsing, and certificate signing logic without leaving persistent state.
+*   **Scope**: Tests within `server/tests/enrollment_test.go` validate server-side logic, including enrollment token validation, public key parsing, and client certificate signing.
+*   **Isolation**: The `--rm` flag ensures ephemeral containers, preventing test side-effects from persisting.
 
 ## Rust Agent Test Execution Strategy (Integration Tests)
 
-Integration tests verify the end-to-end flow between the Windows host and the Dockerized server.
+*   **Environment**: Rust tests, particularly integration tests, are executed natively on the Windows host but interact with the Go server running in WSL/Docker.
+*   **Workflow for Integration Tests**:
+    1.  **Start Go Server**: Initiate the Dockerized Go server in the background: `wsl docker compose up -d server`.
+    2.  **Server Readiness**: Wait for a short period (e.g., `wsl sleep 5`) to allow the Go server to initialize and generate its `ca.crt`.
+    3.  **Execute Rust Tests**: Run the Rust integration tests which simulate agent behavior: `cargo test --workspace --test enrollment_test`.
+        *   These tests are located in `crates/agent/tests/enrollment_test.rs`.
+        *   They verify the end-to-end enrollment flow, certificate persistence, and successful mTLS reconnection.
+    4.  **Teardown Go Server**: Stop and remove the Docker containers: `wsl docker compose down`.
+*   **Trust Context**: The Rust agent tests read the `ca.crt` (copied from the Docker container to the workspace root) to establish trust with the Go server.
 
-### **Command Sequence:**
-
-1.  `wsl docker compose up -d server`
-2.  `wsl sleep 5` (Allow server to initialize and generate `ca.crt`)
-3.  `cargo test --workspace --test enrollment_test`
-4.  `wsl docker compose down`
-
-*   **Context**: The agent reads `ca.crt` from the root directory (shared volume or local copy) to establish trust.
-*   **Outcome**: Verifies HTTPS enrollment, certificate persistence, and successful mTLS reconnection on port 8444.
-
-## Port Configuration
-
-- **Port 8443**: HTTPS Enrollment endpoint.
-- **Port 8444**: mTLS Secured communication endpoint.

@@ -40,14 +40,13 @@ pub fn cleanup_log_dir() {
 #[macro_export]
 macro_rules! log_entry {
     ($($arg:tt)*) => ({
-        use chrono::Local;
         use std::io::Write;
         let msg = format!($($arg)*);
         let file = file!();
         let line = line!();
         let log_line = format!("{}[{}]: \"{}\"\n", file, line, msg);
         
-        if let Some(mut file) = $crate::logger::LOG_FILE.get() {
+        if let Some(mut file) = $crate::LOG_FILE.get() {
             let _ = file.write_all(log_line.as_bytes());
         } else {
             // Fallback to stderr if logger not initialized
@@ -56,7 +55,7 @@ macro_rules! log_entry {
     });
 }
 
-pub use log_entry;
+
 
 pub fn set_log_file_for_tests(file: std::fs::File) {
     let _ = LOG_FILE.set(file);

@@ -74,8 +74,14 @@ func EnrollmentHandler(w http.ResponseWriter, r *http.Request) {
 	// Sign the public key
 	clientCertDER, err := certutil.SignClientPublicKey(caCertDER, caPriv, req.AgentID, req.PublicKey)
 	if err != nil {
-		http.Error(w, "Failed to sign certificate", http.StatusInternalServerError)
-		logger.Logf("Failed to sign certificate: %v", err)
+		// Differentiate between bad request (e.g., malformed public key) and internal server error
+		if _, ok := err.(*certutil.PublicKeyError); ok {
+			http.Error(w, fmt.Sprintf("Invalid public key: %v", err), http.StatusBadRequest)
+			logger.Logf("Invalid public key provided by %s: %v", req.AgentID, err)
+		} else {
+			http.Error(w, "Failed to sign certificate", http.StatusInternalServerError)
+			logger.Logf("Failed to sign certificate for %s: %v", req.AgentID, err)
+		}
 		return
 	}
 

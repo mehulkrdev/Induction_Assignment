@@ -5,7 +5,8 @@ use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
 
-use enrollment_agent_logger as logger;
+#[macro_use]
+extern crate enrollment_agent_logger;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnrollmentRequest {
@@ -69,35 +70,62 @@ impl Agent {
         let mut cb = reqwest::Client::builder()
             .use_rustls_tls();
         
-        // Try to load CA cert if it exists
-        if Path::new("ca.crt").exists() {
-            let ca_cert_pem = fs::read("ca.crt").map_err(|e| format!("Failed to read ca.crt: {}", e))?;
+        let ca_cert_path = Path::new("ca.crt");
+        if ca_cert_path.exists() {
+            let ca_cert_pem = fs::read(ca_cert_path)
+                .map_err(|e| format!("Failed to read ca.crt: {}", e))?;
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem)
                 .map_err(|e| format!("Failed to parse ca.crt: {}", e))?;
             cb = cb.add_root_certificate(ca_cert);
         } else {
-            // In a production environment, ca.crt should always be present and trusted.
-            // Using `danger_accept_invalid_certs(true)` is a security risk and should be avoided.
+            log_entry!("ERROR: ca.crt not found. Cannot establish secure connection without CA certificate.");
             return Err("ca.crt not found. Cannot establish secure connection without CA certificate.".to_string());
         }
 
-        let client = cb.build().map_err(|e| format!("Failed to build reqwest client: {}", e))?;
+        let client = cb.build().map_err(|e| {
+            log_entry!("ERROR: Failed to build reqwest client: {}", e);
+            format!("Failed to build reqwest client: {}", e)
+        })?;
         
         let url = format!("{}/enroll", self.server_url);
-        let res = client.post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| format!("Enrollment request failed: {}", e))?;
+
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut delay = std::time::Duration::from_secs(1);
+
+        let res = loop {
+            attempts += 1;
+            match client.post(&url)
+                .json(&request)
+                .send()
+                .await {
+                Ok(res) => break Ok(res),
+                Err(e) => {
+                    log_entry!("WARNING: Enrollment request failed (attempt {}/{}) for agent {}: {}", attempts, max_attempts, self.agent_id, e);
+                    if attempts >= max_attempts {
+                        break Err(format!("Enrollment request failed after {} attempts: {}", max_attempts, e));
+                    }
+                    tokio::time::sleep(delay).await;
+                    delay *= 2; // Exponential backoff
+                }
+            }
+        }.map_err(|e| e)?;
 
         if res.status() != reqwest::StatusCode::OK {
-            return Err(format!("Server returned error: {}", res.status()));
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|_| "<unavailable>".to_string());
+            log_entry!("ERROR: Server returned error status for enrollment: {} - Body: {}", status, error_body);
+            return Err(format!("Server returned error: {} - {}", status, error_body));
         }
 
         let response: EnrollmentResponse = res.json().await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+            .map_err(|e| {
+                log_entry!("ERROR: Failed to parse enrollment response: {}", e);
+                format!("Failed to parse enrollment response: {}", e)
+            })?;
 
         if response.status != "success" {
+            log_entry!("ERROR: Enrollment failed with status: {}", response.status);
             return Err(format!("Enrollment failed: {}", response.status));
         }
 
@@ -120,41 +148,86 @@ impl Agent {
             return Err("Identity files (agent.key or agent.crt) not found. Enroll first.".to_string());
         }
 
-        let priv_key_pem = fs::read_to_string("agent.key").map_err(|e| e.to_string())?;
-        let cert_pem = fs::read_to_string("agent.crt").map_err(|e| e.to_string())?;
+        let priv_key_pem = fs::read_to_string("agent.key")
+            .map_err(|e| {
+                log_entry!("ERROR: Failed to read agent.key: {}", e);
+                format!("Failed to read agent.key: {}", e)
+            })?;
+        let cert_pem = fs::read_to_string("agent.crt")
+            .map_err(|e| {
+                log_entry!("ERROR: Failed to read agent.crt: {}", e);
+                format!("Failed to read agent.crt: {}", e)
+            })?;
 
-        let identity = reqwest::Identity::from_pem((cert_pem + "\n" + &priv_key_pem).as_bytes())
-            .map_err(|e| format!("Failed to create identity: {}", e))?;
+        let identity = reqwest::Identity::from_pem((cert_pem.clone() + "\n" + &priv_key_pem).as_bytes())
+            .map_err(|e| {
+                log_entry!("ERROR: Failed to create identity from agent.key and agent.crt (mismatch or malformed): {}", e);
+                format!("Failed to create identity: {}", e)
+            })?;
 
         let mut cb = reqwest::Client::builder()
             .use_rustls_tls()
             .identity(identity);
 
-        if Path::new("ca.crt").exists() {
-            let ca_cert_pem = fs::read("ca.crt").map_err(|e| e.to_string())?;
-            let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| e.to_string())?;
+        let ca_cert_path = Path::new("ca.crt");
+        if ca_cert_path.exists() {
+            let ca_cert_pem = fs::read(ca_cert_path)
+                .map_err(|e| {
+                    log_entry!("ERROR: Failed to read ca.crt: {}", e);
+                    format!("Failed to read ca.crt: {}", e)
+                })?;
+            let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem)
+                .map_err(|e| {
+                    log_entry!("ERROR: Failed to parse ca.crt: {}", e);
+                    format!("Failed to parse ca.crt: {}", e)
+                })?;
             cb = cb.add_root_certificate(ca_cert);
         } else {
-            // In a production environment, ca.crt should always be present and trusted.
-            // Using `danger_accept_invalid_certs(true)` is a security risk and should be avoided.
+            log_entry!("ERROR: ca.crt not found. Cannot establish secure connection without CA certificate.");
             return Err("ca.crt not found. Cannot establish secure connection without CA certificate.".to_string());
         }
 
-        let client = cb.build().map_err(|e| e.to_string())?;
+        let client = cb.build().map_err(|e| {
+            log_entry!("ERROR: Failed to build reqwest client for mTLS: {}", e);
+            format!("Failed to build reqwest client for mTLS: {}", e)
+        })?;
         
         let m_tls_url = self.server_url.replace("8443", "8444");
         let secure_url = format!("{}/secure", m_tls_url);
-        
-        let res = client.get(&secure_url)
-            .send()
-            .await
-            .map_err(|e| format!("mTLS request failed: {}", e))?;
+
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut delay = std::time::Duration::from_secs(1);
+
+        let res = loop {
+            attempts += 1;
+            match client.get(&secure_url)
+                .send()
+                .await {
+                Ok(res) => break Ok(res),
+                Err(e) => {
+                    log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}", attempts, max_attempts, self.agent_id, e);
+                    if attempts >= max_attempts {
+                        break Err(format!("mTLS reconnection request failed after {} attempts: {}", max_attempts, e));
+                    }
+                    tokio::time::sleep(delay).await;
+                    delay *= 2; // Exponential backoff
+                }
+            }
+        }.map_err(|e| e)?;
 
         if res.status() != reqwest::StatusCode::OK {
-            return Err(format!("mTLS Server returned error: {}", res.status()));
+            let status = res.status();
+            let error_body = res.text().await.unwrap_or_else(|_| "<unavailable>".to_string());
+            log_entry!("ERROR: mTLS Server returned error status: {} - Body: {}", status, error_body);
+            return Err(format!("Server returned error: {} - {}", status, error_body));
         }
 
-        let body = res.text().await.map_err(|e| e.to_string())?;
+        let body = res.text().await
+            .map_err(|e| {
+                log_entry!("ERROR: Failed to read mTLS response body: {}", e);
+                format!("Failed to read mTLS response body: {}", e)
+            })?;
         log_entry!("mTLS reconnection successful: {}", body);
         Ok(body)
     }

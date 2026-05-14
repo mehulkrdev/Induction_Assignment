@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+// PublicKeyError is a custom error type for public key related issues
+type PublicKeyError struct {
+	Message string
+}
+
+func (e *PublicKeyError) Error() string {
+	return e.Message
+}
+
 // GenerateCACert generates a self-signed CA certificate and private key.
 func GenerateCACert() ([]byte, *ecdsa.PrivateKey, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -82,13 +91,13 @@ func SignClientPublicKey(caCertDER []byte, caPriv *ecdsa.PrivateKey, agentID str
 	}
 
 	block, _ := pem.Decode([]byte(pubKeyPEM))
-	if block == nil {
-		return nil, fmt.Errorf("failed to decode PEM block containing public key")
+	if block == nil || block.Type != "PUBLIC KEY" || len(block.Bytes) == 0 {
+		return nil, &PublicKeyError{Message: "invalid or empty PEM block containing public key"}
 	}
 
 	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, err
+		return nil, &PublicKeyError{Message: fmt.Sprintf("failed to parse public key: %v", err)}
 	}
 
 	template := x509.Certificate{
@@ -104,7 +113,7 @@ func SignClientPublicKey(caCertDER []byte, caPriv *ecdsa.PrivateKey, agentID str
 
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caPriv)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create client certificate: %w", err)
 	}
 
 	return derBytes, nil
