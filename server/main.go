@@ -140,7 +140,6 @@ func main() {
 		err = http.ListenAndServeTLS(port, "server.crt", "server.key", nil)
 		if err != nil {
 			logger.Logf("Server failed to start: %v", err)
-			os.Exit(1)
 		}
 	}()
 
