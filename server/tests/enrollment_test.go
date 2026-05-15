@@ -36,79 +36,84 @@ func TestMain(m *testing.M) {
 	os.Exit(exitCode)
 }
 
-func TestEnrollmentEndpoint(t *testing.T) {
-	t.Run("Valid Enrollment Request", func(t *testing.T) {
-		// Generate a dummy ECDSA public key for the test
-		priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		pubBytes, _ := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-		pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes}))
+// Scenario: Server receives a valid enrollment request.
+// Expectation: Server returns status OK and a valid certificate.
+func Test_EnrollmentHandler_ValidRequest_ReturnsStatusOK(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pubBytes, _ := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes}))
 
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			EnrollmentToken: "valid-token",
-			AgentID:         "agent-1",
-			PublicKey:       pubPEM,
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
-
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
-		}
-
-		var resp EnrollmentResponse
-		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-			t.Errorf("failed to decode response: %v", err)
-		}
-		if resp.Status != "success" {
-			t.Errorf("expected status success, got %s", resp.Status)
-		}
-		if resp.Certificate == "" {
-			t.Errorf("expected certificate in response, got empty")
-		}
+	reqBody, _ := json.Marshal(EnrollmentRequest{
+		EnrollmentToken: "valid-token",
+		AgentID:         "agent-1",
+		PublicKey:       pubPEM,
 	})
+	req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
+	rr := httptest.NewRecorder()
 
-	t.Run("Malformed JSON", func(t *testing.T) {
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer([]byte(`{"invalid": json`)))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+	handler := http.HandlerFunc(EnrollmentHandler)
+	handler.ServeHTTP(rr, req)
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code for malformed JSON: got %v want %v", status, http.StatusBadRequest)
-		}
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	var resp EnrollmentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Errorf("failed to decode response: %v", err)
+	}
+	if resp.Status != "success" {
+		t.Errorf("expected status success, got %s", resp.Status)
+	}
+	if resp.Certificate == "" {
+		t.Errorf("expected certificate in response, got empty")
+	}
+}
+
+// Scenario: Server receives a malformed JSON body.
+// Expectation: Server returns status Bad Request.
+func Test_EnrollmentHandler_MalformedJSON_ReturnsStatusBadRequest(t *testing.T) {
+	req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer([]byte(`{"invalid": json`)))
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(EnrollmentHandler)
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("handler returned wrong status code for malformed JSON: got %v want %v", status, http.StatusBadRequest)
+	}
+}
+
+// Scenario: Server receives a request with a missing enrollment token.
+// Expectation: Server returns status Unauthorized.
+func Test_EnrollmentHandler_MissingToken_ReturnsStatusUnauthorized(t *testing.T) {
+	reqBody, _ := json.Marshal(EnrollmentRequest{
+		AgentID:   "agent-1",
+		PublicKey: "key-data",
 	})
+	req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(EnrollmentHandler)
+	handler.ServeHTTP(rr, req)
 
-	t.Run("Missing Enrollment Token", func(t *testing.T) {
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			AgentID:   "agent-1",
-			PublicKey: "key-data",
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+	if status := rr.Code; status != http.StatusUnauthorized {
+		t.Errorf("handler returned wrong status code for missing token: got %v want %v", status, http.StatusUnauthorized)
+	}
+}
 
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("handler returned wrong status code for missing token: got %v want %v", status, http.StatusUnauthorized)
-		}
+// Scenario: Server receives a request with an empty agent ID.
+// Expectation: Server returns status Bad Request.
+func Test_EnrollmentHandler_EmptyAgentID_ReturnsStatusBadRequest(t *testing.T) {
+	reqBody, _ := json.Marshal(EnrollmentRequest{
+		EnrollmentToken: "valid-token",
+		AgentID:         "",
+		PublicKey:       "key-data",
 	})
+	req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(EnrollmentHandler)
+	handler.ServeHTTP(rr, req)
 
-	t.Run("Empty Agent ID", func(t *testing.T) {
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			EnrollmentToken: "valid-token",
-			AgentID:         "",
-			PublicKey:       "key-data",
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
-
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code for empty agent ID: got %v want %v", status, http.StatusBadRequest)
-		}
-	})
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("handler returned wrong status code for empty agent ID: got %v want %v", status, http.StatusBadRequest)
+	}
 }
