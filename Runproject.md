@@ -20,13 +20,13 @@ The server is dockerized and manages its own Certificate Authority (CA).
     ```bash
     cd Assignment
     ```
-2.  Start the server using Docker Compose:
+2.  Build the server Docker image and start the server using Docker Compose:
     ```bash
-    docker compose up --build -d
+    wsl docker compose build server && wsl docker compose up -d server --force-recreate
     ```
 3.  Verify the server is running:
     ```bash
-    docker ps
+    wsl docker ps
     ```
     *You should see `assignment-server-1` running and exposing ports `8443` (Enrollment) and `8444` (mTLS).*
 
@@ -62,12 +62,13 @@ We use the built-in integration tests to verify the complete flow: Enrollment ->
     ```
 
 ### How to identify success:
-*   **Test Result**: Look for `test test_agent_enrollment_and_reconnect_integration ... ok`.
+*   **Test Result**: Look for `running 5 tests` followed by `test ... ok` for all tests.
 *   **Log Output**: The agent logs its progress. Look for:
     *   `Starting enrollment for agent: agent-test`
     *   `Enrollment successful. Certificate and key saved.`
     *   `Attempting mTLS reconnection for agent: agent-test`
     *   `mTLS reconnection successful: Hello verified agent: agent-test`
+*   **New Error Handling Tests**: Verify that the new tests for 401, 409, and malformed JSON responses pass with appropriate error messages.
 
 ---
 
@@ -77,7 +78,7 @@ If you prefer to verify the connection manually, follow these steps from the **p
 
 1.  Navigate back to the project root:
     ```bash
-    cd ../..
+    cd ..\
     ```
 
 ### A. Generate Agent Keypair
@@ -94,7 +95,7 @@ PUB_KEY=$(awk '{printf "%s\\n", $0}' manual_agent.pub)
 
 ### C. Enroll Agent via Curl
 ```bash
-curl -vk https://localhost:8443/enroll \
+	curl -vk https://localhost:8443/enroll \
   -H "Content-Type: application/json" \
   -d "{
     \"agent_id\":\"manual-agent\",
@@ -103,6 +104,8 @@ curl -vk https://localhost:8443/enroll \
   }"
 ```
 *Expected: HTTP 200 with a JSON containing the signed certificate.*
+*Expected Error Case (Duplicate): Subsequent enrollments with same agent_id should return 409 Conflict.*
+*Expected Error Case (Invalid Token): Enrollments with an invalid_token should return 401 Unauthorized.*
 
 ### D. Save the Certificate
 Extract the `certificate` field from the JSON response and save it as `manual_agent.crt`. Ensure newlines are preserved.
@@ -128,6 +131,11 @@ curl -vk https://localhost:8444/secure \
 
 ## Troubleshooting
 
-*   **Connection Refused**: Ensure Docker containers are running (`docker ps`).
-*   **CA Certificate Mismatch**: If you restart the server with a clean volume, you MUST re-run the `docker cp` command to get the new `ca.crt`.
+*   **Go Server Build Failures**: If `wsl docker compose build server` fails, check `server/main.go`, `server/pkg/enrollment/service.go`, and `server/tests/enrollment_test.go` for compilation errors related to import paths or syntax. Ensure all changes are correctly applied.
+*   **Go Server Test Failures**: If `wsl docker compose run --rm server go test -v ./...` fails, review the specific test outputs for assertions. Ensure the in-memory `enrolledAgents` map is reset or handled appropriately between test runs if state is shared.
+*   **Connection Refused**: Ensure Docker containers are running (`wsl docker ps`).
+*   **CA Certificate Mismatch**: If you rebuild or restart the server with a clean volume, you MUST re-run the `wsl docker cp assignment-server-1:/app/ca.crt .` command to get the new `ca.crt`.
 *   **Port Conflicts**: Ensure ports `8443` and `8444` are not being used by other applications.
+
+
+

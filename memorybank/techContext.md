@@ -49,7 +49,7 @@
 
 *   **Go Server Workflow (WSL/Docker)**:
     *   **Development/Execution**: All Go code compilation, execution, and testing occurs strictly within Docker containers running in WSL.
-    *   **Unit Tests**: `wsl docker compose run --rm server go test -v ./...` (runs `enrollment_test.go` and other unit tests).
+    *   **Unit Tests**: `wsl docker compose run --rm server go test -v ./...` (runs `enrollment_test.go` and other unit tests, verifying the `server/pkg/enrollment` package).
     *   **Server Startup**: `wsl docker compose up -d server` to start the server in the background.
     *   **No Direct Windows Execution**: Go binaries or scripts are never run natively on the Windows host.
 
