@@ -2,14 +2,18 @@
 
 ## Architecture Overview
 
-The system follows a client-server architecture with strict environment separation.
+The system follows a client-server architecture with strict environment separation and modular service organization.
 
 **Windows Host (Client)**
-└── Rust Agent
+└── Rust Agent (`crates/agent`)
+    ├── `src/main.rs`: CLI entry point.
+    └── `src/lib.rs`: Core agent logic.
 
 **WSL Debian (Infrastructure)**
 └── Docker
     └── Go Server (Appliance)
+        ├── `main.go`: Server initialization.
+        └── `pkg/enrollment`: Modular enrollment service.
 
 ## Communication Flow
 
@@ -27,7 +31,7 @@ The system follows a client-server architecture with strict environment separati
 *   **Initial Trust (Bootstrapping)**: The Rust agent establishes trust by reading the server-generated `ca.crt`. This root certificate is used to validate the server's certificate during HTTPS enrollment.
 *   **Agent Identity Generation**: Upon initiating enrollment, the agent generates a cryptographically secure ECDSA P-256 keypair (`agent.key` and its corresponding public key).
 *   **Secure Enrollment Request**: The agent sends a POST request to `https://localhost:8443/enroll`. The request body includes an `enrollment_token` (for server authorization), `agent_id`, and the PEM-encoded `public_key`.
-*   **Server Validation and Signing**: The Go server validates the `enrollment_token`. If authorized, it signs the agent's public key using its internal Certificate Authority (CA) and returns a PEM-encoded client certificate (`agent.crt`).
+*   **Server Validation and Signing**: The Go server validates the `enrollment_token` using the modular enrollment service in `server/pkg/enrollment`. If authorized, it signs the agent's public key using its internal Certificate Authority (CA) and returns a PEM-encoded client certificate (`agent.crt`).
 *   **Certificate Persistence**: The agent securely persists both its private key (`agent.key`) and the issued client certificate (`agent.crt`) locally for subsequent mTLS communication.
 
 ### 3. Mutual TLS (mTLS) Pattern (Bidirectional Authentication)
@@ -57,15 +61,15 @@ The system follows a client-server architecture with strict environment separati
 
 ### Retry and Backoff Strategy
 *   **Connection Failures**: For transient network issues or temporary server unavailability (e.g., during startup), the agent implements a retry mechanism with an exponential backoff strategy for enrollment requests and mTLS connection attempts.
-    *   **Initial Delay**: A small initial delay (e.g., 1-5 seconds).
-    *   **Exponential Backoff**: Subsequent retries increase the delay exponentially (e.g., 2^n seconds).
-    *   **Jitter**: Random jitter is applied to backoff delays to prevent synchronized retries from overwhelming the server.
-    *   **Max Retries/Timeout**: A configured maximum number of retries or a total timeout period is enforced to prevent indefinite blocking.
+*     **Initial Delay**: A small initial delay (e.g., 1-5 seconds).
+*     **Exponential Backoff**: Subsequent retries increase the delay exponentially (e.g., 2^n seconds).
+*     **Jitter**: Random jitter is applied to backoff delays to prevent synchronized retries from overwhelming the server.
+*     **Max Retries/Timeout**: A configured maximum number of retries or a total timeout period is enforced to prevent indefinite blocking.
 
 ### Test Organization and Operational Guidelines
-*   **Test Organization**: Aligns with a TDD-oriented structure:
-    *   **Rust Agent Tests**: Located in `crates/agent/tests/` and `crates/agent/src/lib.rs` (for integration tests). Focus on end-to-end enrollment, certificate persistence, and mTLS reconnection behavior.
-    *   **Go Server Tests**: Located in `server/tests/`. Focus on unit testing enrollment endpoint validation, token validation, and certificate signing logic. All Go tests run inside Docker.
+*   **Test Organization**: Aligns with a TDD-oriented structure with enhanced isolation and helpers:
+    *   **Rust Agent Tests**: Located in `crates/agent/tests/`. Utilizes `test_helpers.rs` for mocked server interactions and isolated environment setup. Focus on end-to-end enrollment, certificate persistence, and mTLS reconnection behavior.
+    *   **Go Server Tests**: Located in `server/tests/`. Focus on unit testing enrollment endpoint validation, token validation, and certificate signing logic within `pkg/enrollment`. All Go tests run inside Docker.
 *   **Operational Guidelines**:
     *   **Traceability**: Comprehensive logging (`DD-MM-YYYY_HH:MM`) at critical points for auditing and debugging.
     *   **Monitoring**: Key operational metrics (e.g., successful enrollments, mTLS connection rates, error counts) are exposed for monitoring (future enhancement).
@@ -84,7 +88,7 @@ The system follows a client-server architecture with strict environment separati
 *   Agent initiates an HTTPS connection to port `8443`.
 *   Agent generates an ECDSA P-256 keypair.
 *   Agent sends a POST request with `enrollment_token`, `agent_id`, and its PEM-encoded public key.
-*   Server validates the token and signs the public key with its internal CA.
+*   Server validates the token and signs the public key with its internal CA via the enrollment service.
 
 ### Stage 4: Certificate Persistence (Implemented)
 *   Agent receives the signed certificate from the server.
@@ -99,8 +103,8 @@ The system follows a client-server architecture with strict environment separati
 ## Constraints
 
 *   Strict TDD (tests first).
+*   Modular Service Design (separation of concerns).
 *   Minimal implementation initially.
 *   Clear separation of responsibilities.
 *   No mixing of Windows and WSL execution environments.
 *   No cryptographic private keys are ever transmitted or shared across component boundaries.
-

@@ -8,6 +8,9 @@
 
 ## Current State
 
+- **Modularized Enrollment Service**:
+    - Go server logic moved to `server/pkg/enrollment/service.go` for better separation of concerns.
+    - Rust agent enhanced with a clear `main.rs` entry point and refined `lib.rs`.
 - **Fully implemented** secure enrollment logic:
     - Rust agent generates ECDSA P-256 keypairs.
     - Go server validates HMAC-based tokens and signs agent public keys.
@@ -15,6 +18,9 @@
 - **Fully implemented** mTLS communication:
     - Agent uses its certificate and key for authenticated requests on port 8444.
     - Go server verifies agent identity via mTLS.
+- **Enhanced Testing Infrastructure**:
+    - Added `crates/agent/tests/test_helpers.rs` for streamlined integration testing.
+    - Improved test isolation across Go and Rust suites.
 - **Successful integration tests**:
     - Rust integration tests (`enrollment_test.rs`) verify the complete flow: Enrollment -> Persistence -> Reconnection (mTLS).
     - Go unit tests (`enrollment_test.go`) verify endpoint validation and certificate signing logic.
@@ -39,6 +45,9 @@
 - [x] Integration of centralized logging system
 - [x] Full end-to-end integration test (Enrollment + mTLS)
 - [x] Resolved incorrect cross-language module integration between Rust and Go.
+- [x] Modularized Go enrollment logic into `server/pkg/enrollment`.
+- [x] Added Rust agent `main.rs` and integrated test helpers.
+- [x] Updated project documentation and architecture context.
 
 ## Long-Term Direction
 
