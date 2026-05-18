@@ -1,12 +1,21 @@
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::path::PathBuf;
+use std::process::Command;
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
 
 // Helper to run shell commands and capture output
 pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(command).args(args).output().map_err(|e| {
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("wsl");
+        c.arg(command);
+        c
+    } else {
+        Command::new(command)
+    };
+
+    let output = cmd.args(args).output().map_err(|e| {
         format!(
             "Failed to execute command \'{}\' with args {:?}: {}",
             command, args, e
@@ -41,7 +50,7 @@ pub async fn wait_for_server(port: u16) -> Result<(), String> {
     println!("Waiting for server to be ready on {}...", addr);
     let mut attempts = 0;
     let max_attempts = 30; // 30 seconds timeout with 1-second initial delay
-    let mut delay = Duration::from_secs(1);
+    let delay = Duration::from_secs(1);
 
     while attempts < max_attempts {
         match timeout(Duration::from_secs(1), TcpStream::connect(&addr)).await {
@@ -100,18 +109,29 @@ pub async fn get_server_container_id() -> Result<String, String> {
 
 // Extracts the CA certificate from the running server container to a temporary directory
 pub async fn extract_ca_cert(temp_dir: &Path, container_id: &str) -> Result<PathBuf, String> {
-    use std::path::PathBuf;
     let dest_path = temp_dir.join("ca.crt");
-    let container_src = format!("{}:/app/ca.crt", container_id);
+    let container_src = format!("{}:/app/data/ca.crt", container_id);
+    
+    // On Windows, temp_dir.path() returns a Windows path (e.g. C:\Users\...).
+    // If we call 'wsl docker cp', WSL docker expects a Linux-style path (e.g. /mnt/c/Users/...).
+    let wsl_dest_path = if cfg!(windows) {
+        let path_str = dest_path.to_string_lossy().to_string();
+        // Simple conversion for common C:\ paths to /mnt/c/
+        path_str.replace("\\", "/").replace("C:", "/mnt/c").replace("c:", "/mnt/c")
+    } else {
+        dest_path.to_string_lossy().to_string()
+    };
+
     println!(
-        "Extracting CA certificate from {} to {}...",
+        "Extracting CA certificate from {} to {} (WSL path: {})...",
         container_src,
-        dest_path.display()
+        dest_path.display(),
+        wsl_dest_path
     );
 
     run_command(
         "docker",
-        &["cp", &container_src, &dest_path.to_string_lossy()],
+        &["cp", &container_src, &wsl_dest_path],
     )
     .await?;
     println!("CA certificate extracted to {}.", dest_path.display());
@@ -121,6 +141,7 @@ pub async fn extract_ca_cert(temp_dir: &Path, container_id: &str) -> Result<Path
 // RAII guard to ensure server cleanup
 pub struct ServerGuard {
     _temp_dir: tempfile::TempDir,
+    is_cleaned_up: bool,
 }
 
 impl ServerGuard {
@@ -139,7 +160,22 @@ impl ServerGuard {
 
         Ok(Self {
             _temp_dir: temp_dir,
+            is_cleaned_up: false,
         })
+    }
+
+    pub async fn cleanup(&mut self) -> Result<(), String> {
+        if !self.is_cleaned_up {
+            println!("Stopping Docker Compose server via explicit cleanup...");
+            let result = stop_server().await;
+            if let Err(e) = &result {
+                eprintln!("Error stopping server during cleanup: {}", e);
+            }
+            self.is_cleaned_up = result.is_ok();
+            result
+        } else {
+            Ok(())
+        }
     }
 
     pub fn ca_cert_path(&self) -> PathBuf {
@@ -153,14 +189,8 @@ impl ServerGuard {
 
 impl Drop for ServerGuard {
     fn drop(&mut self) {
-        println!("Stopping Docker Compose server via Drop...");
-        if let Err(e) = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(stop_server())
-        {
-            eprintln!("Error stopping server in Drop: {}", e);
+        if !self.is_cleaned_up {
+            eprintln!("WARNING: ServerGuard was dropped without explicit cleanup. Docker containers might still be running.");
         }
     }
 }

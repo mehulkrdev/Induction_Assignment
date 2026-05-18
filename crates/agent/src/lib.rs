@@ -2,9 +2,8 @@ use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 use std::path::PathBuf;
+use tokio::fs;
 
 #[macro_use]
 extern crate enrollment_agent_logger;
@@ -42,6 +41,11 @@ pub struct Agent {
     pub agent_id: String,
     pub server_url: String,
     pub certs_path: PathBuf,
+}
+
+#[cfg(test)]
+pub struct AgentTestConfig {
+    pub certs_path: Option<PathBuf>,
 }
 
 impl Agent {
@@ -88,7 +92,7 @@ impl Agent {
 
         let ca_cert_path = self.certs_path.join("ca.crt");
         if ca_cert_path.exists() {
-            let ca_cert_pem = fs::read(&ca_cert_path).map_err(|e| {
+            let ca_cert_pem = fs::read(&ca_cert_path).await.map_err(|e| {
                 format!(
                     "Failed to read ca.crt from {}: {}",
                     ca_cert_path.display(),
@@ -141,8 +145,7 @@ impl Agent {
                     delay *= 2; // Exponential backoff
                 }
             }
-        }
-        .map_err(|e| e)?;
+        }?;
 
         if res.status() != reqwest::StatusCode::OK {
             let status = res.status();
@@ -298,21 +301,21 @@ impl Agent {
 
         let res = loop {
             attempts += 1;
-            match client.get(&secure_url)
-                .send()
-                .await {
+            match client.get(&secure_url).send().await {
                 Ok(res) => break Ok(res),
                 Err(e) => {
                     log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}", attempts, max_attempts, self.agent_id, e);
                     if attempts >= max_attempts {
-                        break Err(format!("mTLS reconnection request failed after {} attempts: {}", max_attempts, e));
+                        break Err(format!(
+                            "mTLS reconnection request failed after {} attempts: {}",
+                            max_attempts, e
+                        ));
                     }
                     tokio::time::sleep(delay).await;
                     delay *= 2; // Exponential backoff
                 }
             }
-        }.map_err(|e| e)?;
-
+        }?;
         if res.status() != reqwest::StatusCode::OK {
             let status = res.status();
             let error_body = res

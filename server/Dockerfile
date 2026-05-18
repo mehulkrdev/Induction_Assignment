@@ -5,14 +5,14 @@ WORKDIR /app
 # Copy module files
 COPY server/go.mod server/go.sum ./
 
-# Copy shared crates/modules
-
-
 # Download dependencies
 RUN go mod download
 
 # Copy server source
 COPY server .
+
+# Copy necessary third_party assets
+COPY third_party /third_party
 
 # Build
 RUN go build -o /server_app .

@@ -8,3 +8,6 @@ services:
       - "8444:8444"
     volumes:
       - /mnt/c/Assignment/Logs:/Assignment/Logs
+      - ./data:/app/data
+    environment:
+      - WORKSPACE_ROOT=/app # Explicitly set for container runtime. Do not remove.

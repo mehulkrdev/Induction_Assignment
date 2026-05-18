@@ -19,9 +19,10 @@ ca.key
 ca.crt
 manual_agent.*
 
-# Environment / Logs
+# Environment / Logs / Data
 *.log
 .env
+data/
 
 # IDEs
 .vscode/

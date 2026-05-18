@@ -9,10 +9,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
 	"github.com/mehulkrdev/Assignment/server/pkg/enrollment"
 	"github.com/mehulkrdev/Assignment/server/pkg/logger"
+	"github.com/mehulkrdev/Assignment/server/pkg/pathutil"
 )
 
 var (
@@ -80,9 +82,20 @@ func main() {
 	// Initialize Enrollment Service
 	enrollmentService = enrollment.NewEnrollmentService(caCertDER, caPriv)
 
+	// Get data directory for ephemeral certs
+	dataDir, err := pathutil.GetDataPath()
+	if err != nil {
+		logger.Logf("Failed to get data directory: %v", err)
+		os.Exit(1)
+	}
+
+	caCertPath := filepath.Join(dataDir, "ca.crt")
+	serverCertPath := filepath.Join(dataDir, "server.crt")
+	serverKeyPath := filepath.Join(dataDir, "server.key")
+
 	// Save CA cert for agent to trust
 	caPEM := certutil.EncodeCertToPEM(caCertDER)
-	err = ioutil.WriteFile("ca.crt", []byte(caPEM), 0644)
+	err = ioutil.WriteFile(caCertPath, []byte(caPEM), 0644)
 	if err != nil {
 		logger.Logf("Failed to save CA cert: %v", err)
 		os.Exit(1)
@@ -98,12 +111,12 @@ func main() {
 	serverCertPEM := certutil.EncodeCertToPEM(serverCertDER)
 	serverPrivPEM, _ := certutil.EncodePrivKeyToPEM(serverPriv)
 
-	err = ioutil.WriteFile("server.crt", []byte(serverCertPEM), 0644)
+	err = ioutil.WriteFile(serverCertPath, []byte(serverCertPEM), 0644)
 	if err != nil {
 		logger.Logf("Failed to save server cert: %v", err)
 		os.Exit(1)
 	}
-	err = ioutil.WriteFile("server.key", []byte(serverPrivPEM), 0600)
+	err = ioutil.WriteFile(serverKeyPath, []byte(serverPrivPEM), 0600)
 	if err != nil {
 		logger.Logf("Failed to save server key: %v", err)
 		os.Exit(1)
@@ -116,7 +129,7 @@ func main() {
 
 	// Start enrollment server in goroutine
 	go func() {
-		err = http.ListenAndServeTLS(port, "server.crt", "server.key", nil)
+		err = http.ListenAndServeTLS(port, serverCertPath, serverKeyPath, nil)
 		if err != nil {
 			logger.Logf("Server failed to start: %v", err)
 			os.Exit(1)
@@ -149,7 +162,7 @@ func main() {
 	}
 
 	logger.Logf("mTLS Server starting on port :8444")
-	err = server8444.ListenAndServeTLS("server.crt", "server.key")
+	err = server8444.ListenAndServeTLS(serverCertPath, serverKeyPath)
 	if err != nil {
 		logger.Logf("mTLS Server failed to start: %v", err)
 		os.Exit(1)

@@ -34,11 +34,15 @@ The server is dockerized and manages its own Certificate Authority (CA).
 
 ## Step 2 — Extract the CA Certificate
 
-The agent needs the server's CA certificate to verify the server's identity.
+The agent and manual `curl` commands need the server's CA certificate to verify the server's identity.
 
-1.  **From the project root**, copy the `ca.crt` from the running container:
+1.  **From the project root**, create the `data/` directory if it doesn't exist:
     ```bash
-    docker cp assignment-server-1:/app/ca.crt .
+    mkdir -p data
+    ```
+2.  Copy the `ca.crt` from the running `assignment-server-1` container to the `data/` directory on your host:
+    ```bash
+    wsl docker cp assignment-server-1:/app/data/ca.crt ./data/ca.crt
     ```
 
 ---
@@ -51,18 +55,14 @@ We use the built-in integration tests to verify the complete flow: Enrollment ->
     ```bash
     cd crates/agent
     ```
-2.  Ensure `ca.crt` is available in this directory (it should be if you ran the `docker cp` command correctly in Step 2, as the root directory is a parent):
-    *Note: If the test fails with "ca.crt not found", copy it into this folder:*
-    ```bash
-    cp ../../ca.crt .
-    ```
+2.  The agent tests will automatically locate the `ca.crt` from the `data/` directory at the project root.
 3.  Run the integration tests:
     ```bash
     cargo test -p enrollment-agent --test enrollment_test -- --nocapture
     ```
 
 ### How to identify success:
-*   **Test Result**: Look for `running 5 tests` followed by `test ... ok` for all tests.
+*   **Test Result**: Look for `running 6 tests` followed by `test ... ok` for all tests.
 *   **Log Output**: The agent logs its progress. Look for:
     *   `Starting enrollment for agent: agent-test`
     *   `Enrollment successful. Certificate and key saved.`
@@ -74,48 +74,50 @@ We use the built-in integration tests to verify the complete flow: Enrollment ->
 
 ## Step 4 — Manual Verification (Using Curl)
 
-If you prefer to verify the connection manually, follow these steps from the **project root**:
+Manual verification allows you to test the enrollment and mTLS flow without the Rust agent. **Ensure the Go server is running and `ca.crt` has been extracted to `data/ca.crt` (see Steps 1 & 2) before proceeding.**
 
-1.  Navigate back to the project root:
-    ```bash
-    cd ..\
-    ```
+Follow these steps from the **project root**:
 
 ### A. Generate Agent Keypair
+Generate a new ECDSA P-256 keypair for the manual agent:
 ```bash
 openssl ecparam -name prime256v1 -genkey -noout -out manual_agent.key
 openssl ec -in manual_agent.key -pubout -out manual_agent.pub
 ```
 
 ### B. Prepare Public Key for JSON
+The public key must be properly formatted (newlines escaped) to be sent in a JSON payload:
 ```bash
-# This formats the public key for inclusion in a JSON string
+# Run this in WSL/Linux to format the key into a variable
 PUB_KEY=$(awk '{printf "%s\\n", $0}' manual_agent.pub)
 ```
 
 ### C. Enroll Agent via Curl
+Send the enrollment request and automatically save the received certificate to `manual_agent.crt` in the project root.
+
+Run the following command in WSL/Linux:
 ```bash
-	curl -vk https://localhost:8443/enroll \
+# This command sends the enrollment request, parses the JSON response using 'jq', 
+# handles escaped newlines, and saves the certificate to manual_agent.crt.
+curl -sk https://localhost:8443/enroll \
   -H "Content-Type: application/json" \
   -d "{
     \"agent_id\":\"manual-agent\",
     \"enrollment_token\":\"valid-token\",
     \"public_key\":\"$PUB_KEY\"
-  }"
+  }" | jq -r .certificate | sed 's/\\n/\n/g' > manual_agent.crt
 ```
-*Expected: HTTP 200 with a JSON containing the signed certificate.*
-*Expected Error Case (Duplicate): Subsequent enrollments with same agent_id should return 409 Conflict.*
-*Expected Error Case (Invalid Token): Enrollments with an invalid_token should return 401 Unauthorized.*
+*   **Note**: This requires `jq` to be installed (`sudo apt install jq`).
+*   **Verification**: Ensure `manual_agent.crt` exists and contains a valid certificate.
+*   **Expected Error Case (Duplicate)**: If the agent is already enrolled, the command might fail or save an empty file. Check the server response.
 
-### D. Save the Certificate
-Extract the `certificate` field from the JSON response and save it as `manual_agent.crt`. Ensure newlines are preserved.
-
-### E. Verify mTLS Connection
+### D. Verify mTLS Connection
+Test the mutual TLS connection by accessing the secure endpoint on port `8444`:
 ```bash
 curl -vk https://localhost:8444/secure \
   --cert manual_agent.crt \
   --key manual_agent.key \
-  --cacert ca.crt
+  --cacert data/ca.crt
 ```
 
 ### How to identify success:
@@ -134,7 +136,7 @@ curl -vk https://localhost:8444/secure \
 *   **Go Server Build Failures**: If `wsl docker compose build server` fails, check `server/main.go`, `server/pkg/enrollment/service.go`, and `server/tests/enrollment_test.go` for compilation errors related to import paths or syntax. Ensure all changes are correctly applied.
 *   **Go Server Test Failures**: If `wsl docker compose run --rm server go test -v ./...` fails, review the specific test outputs for assertions. Ensure the in-memory `enrolledAgents` map is reset or handled appropriately between test runs if state is shared.
 *   **Connection Refused**: Ensure Docker containers are running (`wsl docker ps`).
-*   **CA Certificate Mismatch**: If you rebuild or restart the server with a clean volume, you MUST re-run the `wsl docker cp assignment-server-1:/app/ca.crt .` command to get the new `ca.crt`.
+*   **CA Certificate Mismatch**: If you rebuild or restart the server with a clean volume, you MUST re-run the `wsl docker cp assignment-server-1:/app/data/ca.crt ./data` command to get the new `ca.crt`.
 *   **Port Conflicts**: Ensure ports `8443` and `8444` are not being used by other applications.
 
 
