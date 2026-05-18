@@ -8,10 +8,10 @@
 ## Environments & Execution Model
 
 ### Windows Host (for Rust Agent Development and Execution)
-*   **Role**: Primary development environment for the Rust agent.
-*   **Execution**: Rust agent binaries run natively on Windows.
-*   **Tooling**: Uses Cargo for building, testing, and managing Rust dependencies.
-*   **Path Context**: Rust-related commands (e.g., `cargo build`, `cargo test`) are executed from `crates/agent/` or the workspace root (`Assignment/`) via `cargo test --workspace`.
+*   **Role**: Primary development and execution environment for both Rust agent and Go server (via Docker).
+*   **Execution**: Rust agent binaries and tests run natively within WSL. Go server runs containerized in Docker within WSL.
+*   **Tooling**: Uses Cargo for Rust, and Docker/Docker Compose for Go.
+*   **Path Context**: All commands (Rust and Docker) are expected to be run from the project root (`Assignment/`) within a WSL terminal. Rust tests automatically resolve the workspace root.
 
 ### WSL/Docker (for Go Server Development and Execution)
 *   **Role**: Provides a Linux-based isolated environment for the Go server.
@@ -38,19 +38,19 @@
 
 ## Execution Rules & Workflow Separation
 
-*   **Rust Agent Workflow (Windows Host)**:
-    *   **Build/Test**: `cargo build` or `cargo test` from `crates/agent/`.
-    *   **Workspace Tests**: `cargo test --workspace` from the repository root.
+*   **Rust Agent Workflow (WSL Host)**:
+    *   **Build/Test**: `cargo build` or `cargo test` from `crates/agent/` (within WSL).
     *   **Integration with Go Server**: For end-to-end tests, the Go server MUST be running in WSL/Docker before executing Rust integration tests.
-        1.  Start Go server: `wsl docker compose up -d server`
-        2.  Wait for server readiness (e.g., `wsl sleep 5` for `ca.crt` generation).
-        3.  Run Rust integration tests: `cargo test --workspace --test enrollment_test`.
-        4.  Shut down Go server: `wsl docker compose down`.
+        1.  Start Go server: `docker compose up -d server` (from project root in WSL).
+        2.  Wait for server readiness (e.g., `sleep 5` for `ca.crt` generation).
+        3.  Run Rust integration tests: `cd crates/agent && cargo test --test enrollment_test` (from project root, then `cd` into `crates/agent` in WSL).
+        4.  Shut down Go server: `docker compose down` (from project root in WSL).
+    *   **Workspace-Root Resolution**: Rust tests use `test_helpers.rs` to find `data/` and `third_party/` relative to the workspace root, making test execution robust to current directory changes within the workspace.
 
 *   **Go Server Workflow (WSL/Docker)**:
     *   **Development/Execution**: All Go code compilation, execution, and testing occurs strictly within Docker containers running in WSL.
-    *   **Unit Tests**: `wsl docker compose run --rm server go test -v ./...` (runs `enrollment_test.go` and other unit tests, verifying the `server/pkg/enrollment` package).
-    *   **Server Startup**: `wsl docker compose up -d server` to start the server in the background.
+    *   **Unit Tests**: `docker compose run --rm server go test -v ./...` (runs `enrollment_test.go` and other unit tests, verifying the `server/pkg/enrollment` package, from project root in WSL).
+    *   **Server Startup**: `docker compose up -d server` to start the server in the background (from project root in WSL).
     *   **No Direct Windows Execution**: Go binaries or scripts are never run natively on the Windows host.
 
 ## CA-based Trust Model & Cryptographic Ownership Boundaries
@@ -77,8 +77,9 @@
 
 ## Constraints
 
-*   No direct Go installation or execution on Windows host.
-*   Strict separation of Windows and WSL/Docker environments for command execution.
-*   All server-side behavior, including unit tests, is validated exclusively within Docker.
+*   No direct Go installation or execution on Windows host. All Go operations occur within Docker in WSL.
+*   Strictly WSL-first execution model: Rust agent runs natively within WSL.
+*   All server-side behavior, including unit tests, is validated exclusively within Docker in WSL.
 *   Cryptographic private keys (`agent.key`, `ca.key`, `server.key`) are never shared or transmitted across ownership boundaries.
+*   Async cleanup in Rust agent tests is handled explicitly to prevent nested Tokio runtime panics.
 
