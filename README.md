@@ -283,6 +283,11 @@ Located in:
 ```text
 agent/tests/
 ```
+To run `enrollment_test.rs`, navigate to the `crates/agent` directory within your WSL terminal and then execute the following command:
+
+```bash
+cd crates/agent && cargo test --test enrollment_test -- --nocapture
+```
 
 Tests include:
 
@@ -297,6 +302,14 @@ Located in:
 ```text
 server/tests/
 ```
+
+To run `enrollment_test.go`, which is a Go test for the server, you should use Docker Compose from the project root in your WSL terminal:
+
+```bash
+docker compose run --rm server go test -v ./...
+```
+
+This command starts a temporary container for the server service, runs all Go tests within it (including `enrollment_test.go`), and then removes the container (`--rm`). This ensures the tests run in the same isolated Linux environment as the server itself.
 
 Tests include:
 
