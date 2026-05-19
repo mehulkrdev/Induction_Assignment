@@ -334,10 +334,10 @@ This guide assumes you are working within a **WSL/Linux terminal** (e.g., Ubuntu
 
 ## Step 1 — Navigate to Project Root
 
-Open your WSL terminal and navigate to the cloned project directory. Assuming you cloned it to your Windows user directory:
+Open your WSL terminal and navigate to the cloned project directory. Assuming you cloned it to your Windows user directory (replace `<your-username>` and the path accordingly):
 
 ```bash
-cd /mnt/c/Users/<your-username>/Documents/IDrive_Codebase/Assignment
+cd /mnt/c/Users/<your-username>/path/to/Assignment
 # or, if you have a symlink or other setup:
 # cd ~/Assignment
 ```

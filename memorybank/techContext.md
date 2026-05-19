@@ -30,7 +30,7 @@
 - Go → Only inside Docker container
 - WSL → Linux environment bridge
 - `enrollment_agent_logger` → Rust logging crate (used by agent)
-- `github.com/mehulkrdev/Assignment/server/pkg/logger` → Go logging package (used by server)
+- `github.com/<your-username>/path/to/Assignment/server/pkg/logger` → Go logging package (used by server)
 - Reqwest → Rust HTTP client (with `rustls-tls` for HTTPS)
 - Serde → Rust serialization/deserialization framework
 - `p256`/`pkcs8` → Rust crates for ECDSA P-256 key generation and PEM encoding

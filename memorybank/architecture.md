@@ -239,7 +239,7 @@ The system implements a centralized logging pattern to ensure auditability acros
 *   **Implementation**:
     *   **Rust**: Custom `agent_logger` crate using `once_cell` for global file handle management and `log_entry!` macros.
     *   **Go**: Standard library `log` package wrapped in a custom `pkg/logger` for multi-writer support (Stdout + File).
-*   **Storage**: Logs are stored in a structured directory format (e.g., `/Assignment/Logs/{timestamp}/{component}.log`).
+*   **Storage**: Logs are stored in a structured directory format (e.g., `Logs/{timestamp}/{component}.log` relative to the workspace root).
 
 ---
 
