@@ -22,7 +22,10 @@ func InitLogger(componentName string) {
 	defer mu.Unlock()
 
 	// Container-safe log root directory
-	logRootDir := "/Assignment/Logs"
+	logRootDir := os.Getenv("LOG_ROOT_DIR")
+	if logRootDir == "" {
+		logRootDir = "/var/log/assignment"
+	}
 
 	// Create timestamped directory
 	currentTime := time.Now().Format("02-01-2006_15-04")

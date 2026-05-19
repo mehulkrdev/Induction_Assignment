@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
+	"github.com/mehulkrdev/Assignment/server/pkg/api"
 	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
 	"github.com/mehulkrdev/Assignment/server/pkg/enrollment"
 	"github.com/mehulkrdev/Assignment/server/pkg/logger"
@@ -21,122 +24,67 @@ var (
 	caCertDER         []byte
 	caPriv            *ecdsa.PrivateKey
 	enrollmentService *enrollment.EnrollmentService
+	serverAPI         *api.ServerAPI
 )
 
-// EnrollmentHandler is the exported handler for the /enroll endpoint
-func EnrollmentHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Logf("Received request for %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
-
-	// Only allow POST requests
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		logger.Logf("Method not allowed: %s", r.Method)
-		return
-	}
-
-	var req enrollment.EnrollmentRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, "Malformed JSON", http.StatusBadRequest)
-		logger.Logf("Malformed JSON: %v", err)
-		return
-	}
-
-	clientCertPEM, err := enrollmentService.Enroll(req.AgentID, req.EnrollmentToken, req.PublicKey)
-	if err != nil {
-		// Map service-layer errors to appropriate HTTP status codes
-		switch err.Error() {
-		case "missing or invalid enrollment token":
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-		case "missing agent_id", "invalid public key": // certutil.PublicKeyError is wrapped in enrollment service
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		case "agent ID already enrolled":
-			http.Error(w, err.Error(), http.StatusConflict)
-		default:
-			http.Error(w, "Failed to enroll agent", http.StatusInternalServerError)
-		}
-		logger.Logf("Enrollment failed for AgentID %s: %v", req.AgentID, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(enrollment.EnrollmentResponse{
-		Status:      "success",
-		Certificate: clientCertPEM,
-	})
-}
-
-func main() {
+func run() error {
 	logger.InitLogger("server")
 	defer logger.CleanupLogDir()
 
-	// Initialize CA
-	var err error
-	caCertDER, caPriv, err = certutil.GenerateCACert()
-	if err != nil {
-		logger.Logf("Failed to generate CA: %v", err)
-		os.Exit(1)
-	}
-
-	// Initialize Enrollment Service
-	enrollmentService = enrollment.NewEnrollmentService(caCertDER, caPriv)
-
-	// Get data directory for ephemeral certs
 	dataDir, err := pathutil.GetDataPath()
 	if err != nil {
-		logger.Logf("Failed to get data directory: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to get data directory: %w", err)
 	}
 
 	caCertPath := filepath.Join(dataDir, "ca.crt")
 	serverCertPath := filepath.Join(dataDir, "server.crt")
 	serverKeyPath := filepath.Join(dataDir, "server.key")
 
-	// Save CA cert for agent to trust
+	// Load or Generate CA
+	caCertDER, caPriv, err = certutil.LoadOrCreateCACert(caCertPath)
+	if err != nil {
+		return fmt.Errorf("failed to load or generate CA: %w", err)
+	}
 	caPEM := certutil.EncodeCertToPEM(caCertDER)
-	err = ioutil.WriteFile(caCertPath, []byte(caPEM), 0644)
+
+	// Load or Generate Server Cert
+	serverCert, serverKey, err := certutil.LoadOrCreateServerCert(serverCertPath, serverKeyPath, caCertDER, caPriv)
 	if err != nil {
-		logger.Logf("Failed to save CA cert: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to load or generate server cert: %w", err)
 	}
 
-	// Generate server cert
-	serverCertDER, serverPriv, err := certutil.GenerateServerCert(caCertDER, caPriv)
+	serverCertPEM := certutil.EncodeCertToPEM(serverCert)
+	serverKeyPEM, err := certutil.EncodePrivKeyToPEM(serverKey)
 	if err != nil {
-		logger.Logf("Failed to generate server cert: %v", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to encode server private key to PEM: %w", err)
 	}
 
-	serverCertPEM := certutil.EncodeCertToPEM(serverCertDER)
-	serverPrivPEM, _ := certutil.EncodePrivKeyToPEM(serverPriv)
-
-	err = ioutil.WriteFile(serverCertPath, []byte(serverCertPEM), 0644)
-	if err != nil {
-		logger.Logf("Failed to save server cert: %v", err)
-		os.Exit(1)
-	}
-	err = ioutil.WriteFile(serverKeyPath, []byte(serverPrivPEM), 0600)
-	if err != nil {
-		logger.Logf("Failed to save server key: %v", err)
-		os.Exit(1)
+	// Save CA cert for agent to trust
+	if err := pathutil.AtomicWriteFile(caCertPath, []byte(caPEM), 0644); err != nil {
+		return fmt.Errorf("failed to save CA certificate: %w", err)
 	}
 
-	http.HandleFunc("/enroll", EnrollmentHandler)
+	if err := pathutil.AtomicWriteFile(serverCertPath, []byte(serverCertPEM), 0644); err != nil {
+		return fmt.Errorf("failed to save server certificate: %w", err)
+	}
+	if err := pathutil.AtomicWriteFile(serverKeyPath, []byte(serverKeyPEM), 0600); err != nil {
+		return fmt.Errorf("failed to save server key: %w", err)
+	}
 
-	port := ":8443"
-	logger.Logf("Server starting on port %s (HTTPS)", port)
+	// Initialize Enrollment Service
+	enrollmentService = enrollment.NewEnrollmentService(caCertDER, caPriv, serverCert, serverKey)
+	serverAPI = api.NewServerAPI(enrollmentService)
 
-	// Start enrollment server in goroutine
-	go func() {
-		err = http.ListenAndServeTLS(port, serverCertPath, serverKeyPath, nil)
-		if err != nil {
-			logger.Logf("Server failed to start: %v", err)
-			os.Exit(1)
-		}
-	}()
+	// Setup HTTP server for enrollment (HTTPS)
+	mux8443 := http.NewServeMux()
+	mux8443.HandleFunc("/enroll", serverAPI.EnrollmentHandler)
 
-	// Setup mTLS server on 8444
+	server8443 := &http.Server{
+		Addr:    ":8443",
+		Handler: mux8443,
+	}
+
+	// Setup mTLS server
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM([]byte(caPEM))
 
@@ -161,10 +109,42 @@ func main() {
 		Handler:   mux8444,
 	}
 
-	logger.Logf("mTLS Server starting on port :8444")
-	err = server8444.ListenAndServeTLS(serverCertPath, serverKeyPath)
-	if err != nil {
-		logger.Logf("mTLS Server failed to start: %v", err)
+	// Create a context that is cancelled when the OS sends an interrupt signal.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Start servers in goroutines
+	go func() {
+		logger.Logf("Enrollment Server starting on port :8443 (HTTPS)")
+		if err := server8443.ListenAndServeTLS(serverCertPath, serverKeyPath); err != nil && err != http.ErrServerClosed {
+			logger.Logf("Enrollment Server failed to start: %v", err)
+		}
+	}()
+
+	go func() {
+		logger.Logf("mTLS Server starting on port :8444")
+		if err := server8444.ListenAndServeTLS(serverCertPath, serverKeyPath); err != nil && err != http.ErrServerClosed {
+			logger.Logf("mTLS Server failed to start: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	<-ctx.Done()
+	logger.Logf("Shutting down servers...")
+
+	// Create a deadline to wait for servers to shutdown.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_ = server8443.Shutdown(shutdownCtx)
+	_ = server8444.Shutdown(shutdownCtx)
+	logger.Logf("Servers gracefully stopped.")
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		logger.Logf("Server exited with error: %v", err)
 		os.Exit(1)
 	}
 }

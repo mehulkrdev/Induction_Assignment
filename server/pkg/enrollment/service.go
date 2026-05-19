@@ -3,6 +3,7 @@ package enrollment
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"sync"
 
 	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
 	"github.com/mehulkrdev/Assignment/server/pkg/logger"
@@ -26,14 +27,16 @@ type EnrollmentService struct {
 	caCertDER      []byte
 	caPriv         *ecdsa.PrivateKey
 	enrolledAgents map[string]bool
+	mu             sync.RWMutex
 }
 
 // NewEnrollmentService creates and initializes a new EnrollmentService.
-func NewEnrollmentService(caCertDER []byte, caPriv *ecdsa.PrivateKey) *EnrollmentService {
+func NewEnrollmentService(caCertDER []byte, caPriv *ecdsa.PrivateKey, serverCertDER []byte, serverPriv *ecdsa.PrivateKey) *EnrollmentService {
 	return &EnrollmentService{
 		caCertDER:      caCertDER,
 		caPriv:         caPriv,
 		enrolledAgents: make(map[string]bool),
+		mu:             sync.RWMutex{},
 	}
 }
 
@@ -55,10 +58,13 @@ func (es *EnrollmentService) Enroll(agentID, token, publicKey string) (string, e
 	}
 
 	// Check for duplicate AgentID
+	es.mu.RLock()
 	if _, found := es.enrolledAgents[agentID]; found {
+		es.mu.RUnlock()
 		logger.Logf("Duplicate enrollment attempt for AgentID: %s", agentID)
 		return "", fmt.Errorf("agent ID already enrolled")
 	}
+	es.mu.RUnlock()
 
 	logger.Logf("Enrollment successful for AgentID: %s", agentID)
 
@@ -69,9 +75,23 @@ func (es *EnrollmentService) Enroll(agentID, token, publicKey string) (string, e
 	}
 
 	// Mark agent as enrolled after successful certificate issuance
+	es.mu.Lock()
 	es.enrolledAgents[agentID] = true
+	es.mu.Unlock()
 
 	clientCertPEM := certutil.EncodeCertToPEM(clientCertDER)
 
 	return clientCertPEM, nil
+}
+
+// GetEnrolledAgents for testing purposes
+func (es *EnrollmentService) GetEnrolledAgents() map[string]bool {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	// Return a copy to prevent external modification
+	copyMap := make(map[string]bool)
+	for k, v := range es.enrolledAgents {
+		copyMap[k] = v
+	}
+	return copyMap
 }

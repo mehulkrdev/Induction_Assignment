@@ -1,3 +1,3 @@
-module github.com/mehulkrdev/Induction_Assignment/server
+module github.com/mehulkrdev/Assignment
 
-go 1.26.3
+go 1.22.3

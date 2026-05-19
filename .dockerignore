@@ -1,0 +1,24 @@
+# Ignore git
+.git
+.gitignore
+
+# Ignore Rust
+crates/
+**/target/
+
+# Ignore local data and logs
+data/
+Logs/
+*.log
+
+# Ignore VS Code and other IDEs
+.vscode/
+.idea/
+
+# Ignore local binaries
+*.exe
+server_app
+main
+
+# Ignore memory bank
+memorybank/

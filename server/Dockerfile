@@ -3,19 +3,19 @@ FROM golang:1.22-bookworm
 WORKDIR /app
 
 # Copy module files
-COPY server/go.mod server/go.sum ./
+COPY go.mod go.sum ./
 
 # Download dependencies
 RUN go mod download
 
 # Copy server source
-COPY server .
+COPY server server
 
 # Copy necessary third_party assets
-COPY third_party /third_party
+COPY third_party third_party
 
-# Build
-RUN go build -o /server_app .
+# Build from the server directory
+RUN go build -o /server_app ./server
 
 EXPOSE 8443
 EXPOSE 8444

@@ -2,6 +2,7 @@ package pathutil
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -182,4 +183,39 @@ func GetDataPath() (string, error) {
 		return "", err
 	}
 	return dataPath, nil
+}
+
+// AtomicWriteFile writes data to a file in an atomic fashion.
+// It writes to a temporary file and then renames it to the final destination.
+func AtomicWriteFile(filename string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(filename)
+	tmpFile, err := ioutil.TempFile(dir, "*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name()) // Clean up temp file on exit
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write to temporary file: %w", err)
+	}
+
+	if err := tmpFile.Sync(); err != nil { // Ensure data is flushed to disk
+		tmpFile.Close()
+		return fmt.Errorf("failed to sync temporary file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+
+	if err := os.Chmod(tmpFile.Name(), perm); err != nil {
+		return fmt.Errorf("failed to set permissions on temporary file: %w", err)
+	}
+
+	if err := os.Rename(tmpFile.Name(), filename); err != nil {
+		return fmt.Errorf("failed to rename temporary file to final destination: %w", err)
+	}
+
+	return nil
 }
