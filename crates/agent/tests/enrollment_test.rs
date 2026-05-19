@@ -2,6 +2,7 @@ use enrollment_agent::{Agent, EnrollmentRequest, EnrollmentResponse};
 use enrollment_agent_logger as logger;
 use mockall::{automock, predicate};
 use std::fs::File;
+#[path = "test_helpers.rs"]
 mod test_helpers;
 use test_helpers::ServerGuard;
 

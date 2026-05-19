@@ -3,13 +3,42 @@ use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use thiserror::Error;
 use tokio::fs;
+use std::io;
 
 #[macro_use]
 extern crate enrollment_agent_logger;
 
-#[cfg(test)]
-use crate::test_helpers::AgentTestConfig; // Only used in test configuration
+#[derive(Error, Debug)]
+pub enum AgentError {
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("Security error: {0}")]
+    Security(String),
+
+    #[error("Enrollment failed: {0}")]
+    Enrollment(String),
+
+    #[error("Server returned error: {status} - {body}")]
+    ServerError {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+
+    #[error("Generic error: {0}")]
+    Generic(String),
+}
+
+impl From<String> for AgentError {
+    fn from(s: String) -> Self {
+        AgentError::Generic(s)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnrollmentRequest {
@@ -62,11 +91,11 @@ impl Agent {
         Self {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
-            certs_path: config.certs_path.unwrap_or_else(|| PathBuf::from(".")), // Use provided path or default
+            certs_path: config.certs_path.unwrap_or_else(|| PathBuf::from(".")),
         }
     }
 
-    pub async fn enroll(&self, token: &str) -> Result<(), String> {
+    pub async fn enroll(&self, token: &str) -> Result<(), AgentError> {
         log_entry!("Starting enrollment for agent: {}", self.agent_id);
 
         // 1. Generate ECDSA P-256 keypair
@@ -75,10 +104,10 @@ impl Agent {
 
         let priv_key_pem = signing_key
             .to_pkcs8_pem(LineEnding::LF)
-            .map_err(|e| format!("Failed to encode private key: {}", e))?;
+            .map_err(|e| AgentError::Security(format!("Failed to encode private key: {}", e)))?;
         let pub_key_pem = verifying_key
             .to_public_key_pem(LineEnding::LF)
-            .map_err(|e| format!("Failed to encode public key: {}", e))?;
+            .map_err(|e| AgentError::Security(format!("Failed to encode public key: {}", e)))?;
 
         // 2. Prepare enrollment request
         let request = EnrollmentRequest {
@@ -92,30 +121,21 @@ impl Agent {
 
         let ca_cert_path = self.certs_path.join("ca.crt");
         if ca_cert_path.exists() {
-            let ca_cert_pem = fs::read(&ca_cert_path).await.map_err(|e| {
-                format!(
-                    "Failed to read ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                )
-            })?;
+            let ca_cert_pem = fs::read(&ca_cert_path).await?;
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
-                format!(
+                AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
                     ca_cert_path.display(),
                     e
-                )
+                ))
             })?;
             cb = cb.add_root_certificate(ca_cert);
         } else {
             log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
-            return Err(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display()));
+            return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
         }
 
-        let client = cb.build().map_err(|e| {
-            log_entry!("ERROR: Failed to build reqwest client: {}", e);
-            format!("Failed to build reqwest client: {}", e)
-        })?;
+        let client = cb.build()?;
 
         let url = format!("{}/enroll", self.server_url);
 
@@ -136,10 +156,7 @@ impl Agent {
                         e
                     );
                     if attempts >= max_attempts {
-                        break Err(format!(
-                            "Enrollment request failed after {} attempts: {}",
-                            max_attempts, e
-                        ));
+                        break Err(e);
                     }
                     tokio::time::sleep(delay).await;
                     delay *= 2; // Exponential backoff
@@ -158,45 +175,40 @@ impl Agent {
                 status,
                 error_body
             );
-            return Err(format!(
-                "Server returned error: {} - {}",
-                status, error_body
-            ));
+            return Err(AgentError::ServerError {
+                status,
+                body: error_body,
+            });
         }
 
-        let response: EnrollmentResponse = res.json().await.map_err(|e| {
-            log_entry!("ERROR: Failed to parse enrollment response: {}", e);
-            format!("Failed to parse enrollment response: {}", e)
-        })?;
+        let response: EnrollmentResponse = res.json().await?;
 
         if response.status != "success" {
             log_entry!("ERROR: Enrollment failed with status: {}", response.status);
-            return Err(format!("Enrollment failed: {}", response.status));
+            return Err(AgentError::Enrollment(response.status));
         }
 
         let cert_pem = response
             .certificate
-            .ok_or("No certificate received from server")?;
+            .ok_or_else(|| AgentError::Enrollment("No certificate received from server".to_string()))?;
 
         // 4. Persist keys and certificate
-        fs::write(self.certs_path.join("agent.key"), priv_key_pem.as_bytes())
-            .await
-            .map_err(|e| {
-                format!(
-                    "Failed to save agent.key to {}: {}",
-                    self.certs_path.display(),
-                    e
-                )
-            })?;
-        fs::write(self.certs_path.join("agent.crt"), cert_pem.as_bytes())
-            .await
-            .map_err(|e| {
-                format!(
-                    "Failed to save agent.crt to {}: {}",
-                    self.certs_path.display(),
-                    e
-                )
-            })?;
+        let key_path = self.certs_path.join("agent.key");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut options = std::fs::OpenOptions::new();
+            options.create(true).write(true).truncate(true).mode(0o600);
+            let mut file = options.open(&key_path).map_err(AgentError::Io)?;
+            use std::io::Write;
+            file.write_all(priv_key_pem.as_bytes()).map_err(AgentError::Io)?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(&key_path, priv_key_pem.as_bytes()).await?;
+        }
+
+        fs::write(self.certs_path.join("agent.crt"), cert_pem.as_bytes()).await?;
 
         log_entry!(
             "Enrollment successful. Certificate and key saved to {}.",
@@ -205,50 +217,28 @@ impl Agent {
         Ok(())
     }
 
-    pub async fn reconnect(&self) -> Result<String, String> {
+    pub async fn reconnect(&self) -> Result<String, AgentError> {
         log_entry!("Attempting mTLS reconnection for agent: {}", self.agent_id);
 
         let agent_key_path = self.certs_path.join("agent.key");
         let agent_crt_path = self.certs_path.join("agent.crt");
 
         if !agent_key_path.exists() || !agent_crt_path.exists() {
-            return Err(format!(
+            return Err(AgentError::Security(format!(
                 "Identity files ({}, {}) not found in {}. Enroll first.",
                 agent_key_path.display(),
                 agent_crt_path.display(),
                 self.certs_path.display()
-            ));
+            )));
         }
 
-        let priv_key_pem = fs::read_to_string(&agent_key_path).await.map_err(|e| {
-            log_entry!(
-                "ERROR: Failed to read agent.key from {}: {}",
-                agent_key_path.display(),
-                e
-            );
-            format!(
-                "Failed to read agent.key from {}: {}",
-                agent_key_path.display(),
-                e
-            )
-        })?;
-        let cert_pem = fs::read_to_string(&agent_crt_path).await.map_err(|e| {
-            log_entry!(
-                "ERROR: Failed to read agent.crt from {}: {}",
-                agent_crt_path.display(),
-                e
-            );
-            format!(
-                "Failed to read agent.crt from {}: {}",
-                agent_crt_path.display(),
-                e
-            )
-        })?;
+        let priv_key_pem = fs::read_to_string(&agent_key_path).await?;
+        let cert_pem = fs::read_to_string(&agent_crt_path).await?;
 
         let identity = reqwest::Identity::from_pem((cert_pem.clone() + "\n" + &priv_key_pem).as_bytes())
             .map_err(|e| {
                 log_entry!("ERROR: Failed to create identity from agent.key and agent.crt (mismatch or malformed): {}", e);
-                format!("Failed to create identity: {}", e)
+                AgentError::Security(format!("Failed to create identity: {}", e))
             })?;
 
         let mut cb = reqwest::Client::builder()
@@ -257,40 +247,21 @@ impl Agent {
 
         let ca_cert_path = self.certs_path.join("ca.crt");
         if ca_cert_path.exists() {
-            let ca_cert_pem = fs::read(&ca_cert_path).await.map_err(|e| {
-                log_entry!(
-                    "ERROR: Failed to read ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                );
-                format!(
-                    "Failed to read ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                )
-            })?;
+            let ca_cert_pem = fs::read(&ca_cert_path).await?;
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
-                log_entry!(
-                    "ERROR: Failed to parse ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                );
-                format!(
+                AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
                     ca_cert_path.display(),
                     e
-                )
+                ))
             })?;
             cb = cb.add_root_certificate(ca_cert);
         } else {
             log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
-            return Err(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display()));
+            return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
         }
 
-        let client = cb.build().map_err(|e| {
-            log_entry!("ERROR: Failed to build reqwest client for mTLS: {}", e);
-            format!("Failed to build reqwest client for mTLS: {}", e)
-        })?;
+        let client = cb.build()?;
 
         let m_tls_url = self.server_url.replace("8443", "8444");
         let secure_url = format!("{}/secure", m_tls_url);
@@ -306,10 +277,7 @@ impl Agent {
                 Err(e) => {
                     log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}", attempts, max_attempts, self.agent_id, e);
                     if attempts >= max_attempts {
-                        break Err(format!(
-                            "mTLS reconnection request failed after {} attempts: {}",
-                            max_attempts, e
-                        ));
+                        break Err(e);
                     }
                     tokio::time::sleep(delay).await;
                     delay *= 2; // Exponential backoff
@@ -327,16 +295,13 @@ impl Agent {
                 status,
                 error_body
             );
-            return Err(format!(
-                "Server returned error: {} - {}",
-                status, error_body
-            ));
+            return Err(AgentError::ServerError {
+                status,
+                body: error_body,
+            });
         }
 
-        let body = res.text().await.map_err(|e| {
-            log_entry!("ERROR: Failed to read mTLS response body: {}", e);
-            format!("Failed to read mTLS response body: {}", e)
-        })?;
+        let body = res.text().await?;
         log_entry!("mTLS reconnection successful: {}", body);
         Ok(body)
     }

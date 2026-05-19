@@ -18,12 +18,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match command.as_str() {
         "enroll" => {
-            agent.enroll(token).await?;
+            if let Err(e) = agent.enroll(token).await {
+                eprintln!("Enrollment failed: {}", e);
+                std::process::exit(1);
+            }
             println!("Enrollment successful");
         }
         "reconnect" => {
-            let response = agent.reconnect().await?;
-            println!("Reconnection response: {}", response);
+            match agent.reconnect().await {
+                Ok(response) => println!("Reconnection response: {}", response),
+                Err(e) => {
+                    eprintln!("Reconnection failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         _ => {
             eprintln!("Unknown command: {}", command);

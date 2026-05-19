@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+thiserror = "1.0"
 async-trait = "0.1.89"
 chrono = "0.4"
 hex = "0.4"

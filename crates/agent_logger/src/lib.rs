@@ -3,15 +3,27 @@ use once_cell::sync::OnceCell;
 use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 
-pub static LOG_DIR: OnceCell<PathBuf> = OnceCell::new();
-pub static LOG_FILE: OnceCell<std::fs::File> = OnceCell::new();
+use std::sync::Mutex;
 
-const LOG_ROOT_DIR: &str = "C:/Assignment/Logs";
+pub static LOG_DIR: OnceCell<PathBuf> = OnceCell::new();
+pub static LOG_FILE: OnceCell<Mutex<std::fs::File>> = OnceCell::new();
+
+fn get_log_root_dir() -> PathBuf {
+    std::env::var("AGENT_LOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if cfg!(windows) {
+                PathBuf::from("C:/Assignment/Logs")
+            } else {
+                PathBuf::from("/var/log/enrollment-agent")
+            }
+        })
+}
 
 pub fn init_logger(component_name: &str) -> std::io::Result<()> {
     LOG_DIR
         .get_or_try_init(|| {
-            let logs_root = PathBuf::from(LOG_ROOT_DIR);
+            let logs_root = get_log_root_dir();
 
             fs::create_dir_all(&logs_root)?;
 
@@ -26,7 +38,7 @@ pub fn init_logger(component_name: &str) -> std::io::Result<()> {
                 .open(&log_file_path)?;
 
             LOG_FILE
-                .set(file)
+                .set(Mutex::new(file))
                 .map_err(|_| std::io::Error::other("Failed to set log file"))?;
             Ok(log_run_dir)
         })
@@ -48,8 +60,10 @@ macro_rules! log_entry {
         let line = line!();
         let log_line = format!("{}[{}]: \"{}\"\n", file, line, msg);
 
-        if let Some(mut file) = $crate::LOG_FILE.get() {
-            let _ = file.write_all(log_line.as_bytes());
+        if let Some(mutex) = $crate::LOG_FILE.get() {
+            if let Ok(mut file) = mutex.lock() {
+                let _ = file.write_all(log_line.as_bytes());
+            }
         } else {
             // Fallback to stderr if logger not initialized
             eprint!("Logger not initialized: {}", log_line);
@@ -58,5 +72,5 @@ macro_rules! log_entry {
 }
 
 pub fn set_log_file_for_tests(file: std::fs::File) {
-    let _ = LOG_FILE.set(file);
+    let _ = LOG_FILE.set(Mutex::new(file));
 }
