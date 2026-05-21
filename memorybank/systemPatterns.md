@@ -68,7 +68,8 @@ The system follows a client-server architecture with strict environment separati
 
 ### Test Organization and Operational Guidelines
 *   **Test Organization**: Aligns with a TDD-oriented structure with enhanced isolation and helpers:
-    *   **Rust Agent Tests**: Located in `crates/agent/tests/`. Utilizes `test_helpers.rs` for mocked server interactions and isolated environment setup. Focus on end-to-end enrollment, certificate persistence, and mTLS reconnection behavior.
+    *   **Rust Agent Integration Tests**: Located in `crates/agent/tests/`. These tests now use the `serial_test` crate and are marked with `#[serial]` to prevent race conditions with shared Docker infrastructure. They utilize `test_helpers.rs` for robust Docker server management (smart startup, HTTPS readiness checks, diagnostics) and isolated environment setup. Focus on end-to-end enrollment, certificate persistence, and mTLS reconnection behavior.
+    *   **Rust Agent Unit/Mock Tests**: Other Rust tests (not marked `#[serial]`) can run in parallel.
     *   **Go Server Tests**: Located in `server/tests/`. Focus on unit testing enrollment endpoint validation, token validation, and certificate signing logic within `pkg/enrollment`. All Go tests run inside Docker.
 *   **Operational Guidelines**:
     *   **Traceability**: Comprehensive logging (`DD-MM-YYYY_HH:MM`) at critical points for auditing and debugging.

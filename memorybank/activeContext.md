@@ -31,8 +31,6 @@
 
 ## Known Issues
 
-- The server initialization delay (`sleep 5`) is necessary for Dockerized Go server to be ready before Rust integration tests start, which is a known race condition in distributed test environments.
-
 ## Immediate Next Steps
 
 1. Maintain and monitor the system for any edge cases in certificate handling, especially concerning ephemeral CA lifecycles.
