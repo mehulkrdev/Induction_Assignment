@@ -19,8 +19,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.24"
 tempfile = "3"
 webpki-roots = "0.25"
+x509-parser = "0.9"
 
 enrollment-agent-logger = { path = "../agent_logger" }
 
 [dev-dependencies]
 mockall = "0.11"
+serial_test = "3.1"

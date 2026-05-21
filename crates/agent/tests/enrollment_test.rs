@@ -2,6 +2,7 @@ use enrollment_agent::{Agent, EnrollmentRequest, EnrollmentResponse};
 use enrollment_agent_logger as logger;
 use mockall::{automock, predicate};
 use std::fs::File;
+use serial_test::serial;
 #[path = "test_helpers.rs"]
 mod test_helpers;
 use test_helpers::ServerGuard;
@@ -20,6 +21,7 @@ fn setup_test_logger() -> File {
 // Scenario: Agent successfully enrolls with a valid token.
 // Expectation: Enrollment is successful, and agent.key and agent.crt files are created in the temporary directory.
 #[tokio::test]
+#[serial]
 async fn test_agent_enroll_valid_token_success() {
     let _guard = logger::set_log_file_for_tests(setup_test_logger());
 
@@ -28,14 +30,16 @@ async fn test_agent_enroll_valid_token_success() {
         .await
         .expect("Failed to start server and extract CA cert");
     let temp_dir_path = server_guard.temp_dir_path();
+    let ca_cert_path = server_guard.ca_cert_path(); // Get CA cert path from ServerGuard
 
     let mut agent = Agent::new("agent-test", "https://localhost:8443");
     agent.certs_path = temp_dir_path.to_path_buf();
+    agent.ca_cert_path = Some(ca_cert_path.clone()); // Set CA cert path for the agent
 
     let result = agent.enroll("valid-token").await;
     assert!(result.is_ok(), "Enrollment failed: {:?}", result.err());
-    assert!(temp_dir_path.join("agent.key").exists());
-    assert!(temp_dir_path.join("agent.crt").exists());
+    assert!(temp_dir_path.join("agent.key").exists(), "agent.key should exist after enrollment");
+    assert!(temp_dir_path.join("agent.crt").exists(), "agent.crt should exist after enrollment");
 
     server_guard
         .cleanup()
@@ -46,6 +50,7 @@ async fn test_agent_enroll_valid_token_success() {
 // Scenario: Agent successfully reconnects using existing valid identity files.
 // Expectation: mTLS reconnection is successful and returns a verification message.
 #[tokio::test]
+#[serial]
 async fn test_agent_reconnect_valid_identity_returns_success() {
     let _guard = logger::set_log_file_for_tests(setup_test_logger());
 
@@ -53,18 +58,25 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
         .await
         .expect("Failed to start server and extract CA cert");
     let temp_dir_path = server_guard.temp_dir_path();
+    let ca_cert_path = server_guard.ca_cert_path();
 
     // First, enroll to get valid agent.key and agent.crt
     let mut enrollment_agent = Agent::new("reconnect-agent", "https://localhost:8443");
     enrollment_agent.certs_path = temp_dir_path.to_path_buf();
+    enrollment_agent.ca_cert_path = Some(ca_cert_path.clone());
     enrollment_agent
         .enroll("valid-token")
         .await
         .expect("Initial enrollment for reconnect test failed");
 
+    // Explicitly verify enrollment-generated files exist before attempting mTLS reconnection
+    assert!(temp_dir_path.join("agent.key").exists(), "agent.key must exist before reconnection");
+    assert!(temp_dir_path.join("agent.crt").exists(), "agent.crt must exist before reconnection");
+
     // Now attempt reconnection
     let mut reconnect_agent = Agent::new("reconnect-agent", "https://localhost:8443");
     reconnect_agent.certs_path = temp_dir_path.to_path_buf();
+    reconnect_agent.ca_cert_path = Some(ca_cert_path);
 
     let reconnect_result = reconnect_agent.reconnect().await;
 

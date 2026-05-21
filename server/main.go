@@ -138,7 +138,8 @@ func run() error {
 
 	_ = server8443.Shutdown(shutdownCtx)
 	_ = server8444.Shutdown(shutdownCtx)
-	logger.Logf("Servers gracefully stopped.")
+	logger.Logf("Servers gracefully stopped. Cleaning up log directory.")
+	logger.CleanupLogDir() // Ensure log directory is cleaned up on graceful shutdown
 	return nil
 }
 

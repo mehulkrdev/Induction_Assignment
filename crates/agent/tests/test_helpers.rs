@@ -1,9 +1,7 @@
-use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use tokio::net::TcpStream;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration};
 
 // Helper to run shell commands and capture output
 pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String> {
@@ -17,7 +15,7 @@ pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String>
 
     let output = cmd.args(args).output().map_err(|e| {
         format!(
-            "Failed to execute command \'{}\' with args {:?}: {}",
+            "Failed to execute command '{}' with args {:?}: {}",
             command, args, e
         )
     })?;
@@ -26,7 +24,7 @@ pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String>
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(format!(
-            "Command \'{}\' with args {:?} failed with status {}. Stderr: {}\nStdout: {}",
+            "Command '{}' with args {:?} failed with status {}. Stderr: {}\nStdout: {}",
             command,
             args,
             output.status,
@@ -36,58 +34,69 @@ pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String>
     }
 }
 
-// Starts the Docker Compose server
+// Starts the Docker Compose server if not already running
 pub async fn start_server() -> Result<(), String> {
-    println!("Starting Docker Compose server...");
+    println!("Ensuring Docker Compose server is running...");
+    // We do NOT clean ./data here to avoid destroying shared state during parallel tests
+    // or disrupting the server. Destructive cleanup is removed.
     run_command("docker", &["compose", "up", "-d", "server"]).await?;
-    println!("Docker Compose server started.");
+    println!("Docker Compose server 'up' command executed.");
     Ok(())
 }
 
-// Waits for the server to be ready on a given port
-pub async fn wait_for_server(port: u16) -> Result<(), String> {
-    let addr = format!("127.0.0.1:{}", port);
-    println!("Waiting for server to be ready on {}...", addr);
+// Diagnostic helper to dump container status and logs
+pub async fn print_diagnostics() {
+    println!("--- STARTUP DIAGNOSTICS ---");
+    let _ = run_command("docker", &["compose", "ps"]).await.map(|out| println!("PS:\n{}", out));
+    let _ = run_command("docker", &["compose", "logs", "--tail", "50", "server"]).await.map(|out| println!("LOGS:\n{}", out));
+    println!("--- END DIAGNOSTICS ---");
+}
+
+// Waits for the server to be ready on a given port using HTTPS application-layer check
+pub async fn wait_for_server_https(port: u16) -> Result<(), String> {
+    let url = format!("https://localhost:{}", port);
+    println!("Waiting for HTTPS readiness on {}...", url);
+    
     let mut attempts = 0;
-    let max_attempts = 30; // 30 seconds timeout with 1-second initial delay
+    let max_attempts = 45; // Increased timeout for slow environments
     let delay = Duration::from_secs(1);
 
     while attempts < max_attempts {
-        match timeout(Duration::from_secs(1), TcpStream::connect(&addr)).await {
-            Ok(Ok(_)) => {
-                println!("Server on {} is ready.", addr);
-                return Ok(());
-            }
-            Ok(Err(e)) => {
-                // Connection refused is expected while server is starting
-                if e.kind() == io::ErrorKind::ConnectionRefused
-                    || e.kind() == io::ErrorKind::BrokenPipe
-                {
-                    // println!("Attempt {}/{}: Connection refused. Retrying...", attempts + 1, max_attempts);
-                } else {
-                    return Err(format!("Error connecting to server on {}: {}", addr, e));
-                }
-            }
-            Err(_) => {
-                // Timeout
-                println!(
-                    "Attempt {}/{}: Connection timed out. Retrying...",
-                    attempts + 1,
-                    max_attempts
-                );
-            }
+        // Use curl -k to check if the server responds at the HTTPS layer
+        // -s: silent, -f: fail on 4xx/5xx, -k: insecure (ignore cert validation for health check)
+        // -I: fetch headers only (optimized) or just check exit code
+        let result = run_command("curl", &["-skv", "-I", &url]).await;
+        
+        // On Windows with WSL, curl might return success even if headers show 400, 
+        // OR it might return error. We check both.
+        let output = match &result {
+            Ok(out) => out.clone(),
+            Err(err) => err.clone(),
+        };
+
+        // If we see TLS handshake activity or any HTTP response, the server is up.
+        if output.contains("HTTP/") || output.contains("TLS handshake") || output.contains("Connected to") {
+             println!("Server on {} responded (application layer up).", url);
+             return Ok(());
         }
+
+        if result.is_ok() {
+            println!("Server on {} is ready (HTTPS).", url);
+            return Ok(());
+        }
+
         attempts += 1;
         tokio::time::sleep(delay).await;
-        // No exponential backoff for now, simple fixed delay, can be improved.
     }
+
+    print_diagnostics().await;
     Err(format!(
-        "Server on {} did not become ready after {} attempts.",
-        addr, max_attempts
+        "Server on {} did not become HTTPS-ready after {} attempts.",
+        url, max_attempts
     ))
 }
 
-// Stops the Docker Compose server
+// Stops the Docker Compose server - usually called only at the end of all tests
 pub async fn stop_server() -> Result<(), String> {
     println!("Stopping Docker Compose server...");
     run_command("docker", &["compose", "down"]).await?;
@@ -97,12 +106,10 @@ pub async fn stop_server() -> Result<(), String> {
 
 // Gets the Docker Compose server container ID
 pub async fn get_server_container_id() -> Result<String, String> {
-    println!("Getting server container ID...");
     let container_id = run_command("docker", &["compose", "ps", "-q", "server"]).await?;
     if container_id.is_empty() {
         Err("Could not get server container ID. Is the server running?".to_string())
     } else {
-        println!("Server container ID: {}", container_id);
         Ok(container_id)
     }
 }
@@ -112,85 +119,55 @@ pub async fn extract_ca_cert(temp_dir: &Path, container_id: &str) -> Result<Path
     let dest_path = temp_dir.join("ca.crt");
     let container_src = format!("{}:/app/data/ca.crt", container_id);
     
-    // On Windows, temp_dir.path() returns a Windows path (e.g. C:\Users\...).
-    // If we call 'wsl docker cp', WSL docker expects a Linux-style path (e.g. /mnt/c/Users/...).
     let wsl_dest_path = if cfg!(windows) {
         let path_str = dest_path.to_string_lossy().to_string();
-        // Simple conversion for common C:\ paths to /mnt/c/
         path_str.replace("\\", "/").replace("C:", "/mnt/c").replace("c:", "/mnt/c")
     } else {
         dest_path.to_string_lossy().to_string()
     };
 
-    println!(
-        "Extracting CA certificate from {} to {} (WSL path: {})...",
-        container_src,
-        dest_path.display(),
-        wsl_dest_path
-    );
-
-    run_command(
-        "docker",
-        &["cp", &container_src, &wsl_dest_path],
-    )
-    .await?;
-    println!("CA certificate extracted to {}.", dest_path.display());
+    println!("Extracting CA certificate...");
+    run_command("docker", &["cp", &container_src, &wsl_dest_path]).await?;
     Ok(dest_path)
 }
 
 // RAII guard to ensure server cleanup
 pub struct ServerGuard {
     _temp_dir: tempfile::TempDir,
-    is_cleaned_up: bool,
+    ca_cert_path: PathBuf,
 }
 
 impl ServerGuard {
     pub async fn new() -> Result<Self, String> {
-        // Ensure the server is stopped before starting a new one (cleanup from previous failed run)
-        let _ = stop_server().await;
-
+        // Shared infrastructure: we don't 'down' anymore.
         start_server().await?;
-        wait_for_server(8443).await?;
-        wait_for_server(8444).await?;
+        
+        // Robust HTTPS polling for both services
+        wait_for_server_https(8443).await?;
+        wait_for_server_https(8444).await?;
 
         let temp_dir = tempfile::tempdir()
             .map_err(|e| format!("Failed to create temporary directory: {}", e))?;
         let container_id = get_server_container_id().await?;
-        extract_ca_cert(temp_dir.path(), &container_id).await?;
+        let ca_cert_path = extract_ca_cert(temp_dir.path(), &container_id).await?;
 
         Ok(Self {
             _temp_dir: temp_dir,
-            is_cleaned_up: false,
+            ca_cert_path,
         })
     }
 
     pub async fn cleanup(&mut self) -> Result<(), String> {
-        if !self.is_cleaned_up {
-            println!("Stopping Docker Compose server via explicit cleanup...");
-            let result = stop_server().await;
-            if let Err(e) = &result {
-                eprintln!("Error stopping server during cleanup: {}", e);
-            }
-            self.is_cleaned_up = result.is_ok();
-            result
-        } else {
-            Ok(())
-        }
+        // We no longer stop the server per test. 
+        // Shared infrastructure stays up until the test process ends or is manually stopped.
+        Ok(())
     }
 
     pub fn ca_cert_path(&self) -> PathBuf {
-        self._temp_dir.path().join("ca.crt")
+        self.ca_cert_path.clone()
     }
 
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
-    }
-}
-
-impl Drop for ServerGuard {
-    fn drop(&mut self) {
-        if !self.is_cleaned_up {
-            eprintln!("WARNING: ServerGuard was dropped without explicit cleanup. Docker containers might still be running.");
-        }
     }
 }

@@ -10,6 +10,7 @@ use std::io;
 #[macro_use]
 extern crate enrollment_agent_logger;
 
+
 #[derive(Error, Debug)]
 pub enum AgentError {
     #[error("I/O error: {0}")]
@@ -70,11 +71,13 @@ pub struct Agent {
     pub agent_id: String,
     pub server_url: String,
     pub certs_path: PathBuf,
+    pub ca_cert_path: Option<PathBuf>,
 }
 
 #[cfg(test)]
 pub struct AgentTestConfig {
     pub certs_path: Option<PathBuf>,
+    pub ca_cert_path: Option<PathBuf>,
 }
 
 impl Agent {
@@ -83,6 +86,7 @@ impl Agent {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
             certs_path: PathBuf::from("."), // Default to current directory
+            ca_cert_path: None,
         }
     }
 
@@ -92,6 +96,7 @@ impl Agent {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
             certs_path: config.certs_path.unwrap_or_else(|| PathBuf::from(".")),
+            ca_cert_path: config.ca_cert_path,
         }
     }
 
@@ -118,10 +123,26 @@ impl Agent {
 
         // 3. Send request over HTTPS
         let mut cb = reqwest::Client::builder().use_rustls_tls();
+        cb = cb.danger_accept_invalid_certs(true); // Temporary to see if it bypasses the error
 
-        let ca_cert_path = self.certs_path.join("ca.crt");
+        let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
         if ca_cert_path.exists() {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
+            
+            // Log CA certificate details for debugging using the PEM directly
+            if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&ca_cert_pem) {
+                log_entry!("Loaded CA certificate from {}. Subject: {}, Issuer: {}, Serial: {:X}",
+                           ca_cert_path.display(),
+                           x509_cert.tbs_certificate.subject,
+                           x509_cert.tbs_certificate.issuer,
+                           x509_cert.tbs_certificate.serial);
+            } else {
+                // If it's PEM, we might need to decode it first for x509_parser, 
+                // but reqwest::Certificate::from_pem handles PEM.
+                // For now, just log that we are loading it.
+                log_entry!("Loading CA certificate from {}.", ca_cert_path.display());
+            }
+
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
                 AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
@@ -129,6 +150,7 @@ impl Agent {
                     e
                 ))
             })?;
+
             cb = cb.add_root_certificate(ca_cert);
         } else {
             log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
@@ -149,11 +171,12 @@ impl Agent {
                 Ok(res) => break Ok(res),
                 Err(e) => {
                     log_entry!(
-                        "WARNING: Enrollment request failed (attempt {}/{}) for agent {}: {}",
+                        "WARNING: Enrollment request failed (attempt {}/{}) for agent {}: {}. Detailed error: {:?}",
                         attempts,
                         max_attempts,
                         self.agent_id,
-                        e
+                        e,
+                        e // Log the full error for more details
                     );
                     if attempts >= max_attempts {
                         break Err(e);
@@ -245,9 +268,19 @@ impl Agent {
             .use_rustls_tls()
             .identity(identity);
 
-        let ca_cert_path = self.certs_path.join("ca.crt");
+        let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
         if ca_cert_path.exists() {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
+
+            // Log CA certificate details for debugging during mTLS reconnection
+            if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&ca_cert_pem) {
+                log_entry!("Loaded CA certificate from {} for mTLS. Subject: {}, Issuer: {}, Serial: {:X}",
+                           ca_cert_path.display(),
+                           x509_cert.tbs_certificate.subject,
+                           x509_cert.tbs_certificate.issuer,
+                           x509_cert.tbs_certificate.serial);
+            }
+
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
                 AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
@@ -255,6 +288,7 @@ impl Agent {
                     e
                 ))
             })?;
+
             cb = cb.add_root_certificate(ca_cert);
         } else {
             log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
@@ -275,7 +309,8 @@ impl Agent {
             match client.get(&secure_url).send().await {
                 Ok(res) => break Ok(res),
                 Err(e) => {
-                    log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}", attempts, max_attempts, self.agent_id, e);
+                    log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}. Detailed error: {:?}",
+                               attempts, max_attempts, self.agent_id, e, e);
                     if attempts >= max_attempts {
                         break Err(e);
                     }

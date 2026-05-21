@@ -1,5 +1,6 @@
 use enrollment_agent::Agent;
 use std::env;
+use enrollment_agent_logger;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,6 +15,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent_id = &args[3];
     let server_url = &args[4];
 
+    enrollment_agent_logger::init_logger("agent")
+        .expect("Failed to initialize agent logger");
     let agent = Agent::new(agent_id, server_url);
 
     match command.as_str() {

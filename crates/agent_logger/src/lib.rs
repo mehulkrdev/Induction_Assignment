@@ -63,6 +63,7 @@ macro_rules! log_entry {
         if let Some(mutex) = $crate::LOG_FILE.get() {
             if let Ok(mut file) = mutex.lock() {
                 let _ = file.write_all(log_line.as_bytes());
+                let _ = file.sync_all(); // Ensure persistence across potential crashes
             }
         } else {
             // Fallback to stderr if logger not initialized

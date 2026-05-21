@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mehulkrdev/Assignment/server/pkg/logger"
 	"github.com/mehulkrdev/Assignment/server/pkg/pathutil"
 )
 
@@ -95,13 +96,14 @@ func LoadOrCreateCACert(caCertPath string) ([]byte, *ecdsa.PrivateKey, error) {
 				return nil, nil, fmt.Errorf("failed to parse CA private key from %s: %w", caKeyPath, err)
 			}
 
-			fmt.Printf("Loaded existing CA certificate from %s and %s\n", caCertPath, caKeyPath)
+			logger.Logf("Loaded existing CA certificate from %s and %s. Subject: %s, Issuer: %s, Serial: %s, NotBefore: %s, NotAfter: %s",
+				caCertPath, caKeyPath, caCert.Subject, caCert.Issuer, caCert.SerialNumber, caCert.NotBefore.Format(time.RFC3339), caCert.NotAfter.Format(time.RFC3339))
 			return caCert.Raw, caPriv, nil
 		}
 	}
 
 	// If not found or error, generate new CA
-	fmt.Printf("Generating new CA certificate and key.\n")
+	logger.Logf("Generating new CA certificate and key.")
 	caCertDER, caPriv, err := GenerateCACert()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate new CA: %w", err)
@@ -117,12 +119,14 @@ func LoadOrCreateCACert(caCertPath string) ([]byte, *ecdsa.PrivateKey, error) {
 	if err := pathutil.AtomicWriteFile(caCertPath, []byte(caPEM), 0644); err != nil {
 		return nil, nil, fmt.Errorf("failed to save CA certificate: %w", err)
 	}
-	fmt.Printf("Saved new CA certificate to %s\n", caCertPath)
+	parsedCACert, _ := x509.ParseCertificate(caCertDER)
+	logger.Logf("Saved new CA certificate to %s. Subject: %s, Issuer: %s, Serial: %s, NotBefore: %s, NotAfter: %s",
+		caCertPath, parsedCACert.Subject, parsedCACert.Issuer, parsedCACert.SerialNumber, parsedCACert.NotBefore.Format(time.RFC3339), parsedCACert.NotAfter.Format(time.RFC3339))
 
 	if err := pathutil.AtomicWriteFile(caKeyPath, []byte(caPrivPEM), 0600); err != nil {
 		return nil, nil, fmt.Errorf("failed to save CA private key: %w", err)
 	}
-	fmt.Printf("Saved new CA private key to %s\n", caKeyPath)
+	logger.Logf("Saved new CA private key to %s", caKeyPath)
 
 	return caCertDER, caPriv, nil
 }
@@ -187,13 +191,14 @@ func LoadOrCreateServerCert(serverCertPath, serverKeyPath string, caCertDER []by
 				return nil, nil, fmt.Errorf("failed to parse server private key from %s: %w", serverKeyPath, err)
 			}
 
-			fmt.Printf("Loaded existing server certificate from %s and %s\n", serverCertPath, serverKeyPath)
+			logger.Logf("Loaded existing server certificate from %s and %s. Subject: %s, Issuer: %s, Serial: %s, NotBefore: %s, NotAfter: %s",
+				serverCertPath, serverKeyPath, parsedCert.Subject, parsedCert.Issuer, parsedCert.SerialNumber, parsedCert.NotBefore.Format(time.RFC3339), parsedCert.NotAfter.Format(time.RFC3339))
 			return parsedCert.Raw, priv, nil
 		}
 	}
 
 	// If not found or error, generate new server cert
-	fmt.Printf("Generating new server certificate and key.\n")
+	logger.Logf("Generating new server certificate and key.")
 	serverCertDER, serverPriv, err := GenerateServerCert(caCertDER, caPriv)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate new server cert: %w", err)
@@ -209,12 +214,14 @@ func LoadOrCreateServerCert(serverCertPath, serverKeyPath string, caCertDER []by
 	if err := pathutil.AtomicWriteFile(serverCertPath, []byte(serverCertPEM), 0644); err != nil {
 		return nil, nil, fmt.Errorf("failed to save server certificate: %w", err)
 	}
-	fmt.Printf("Saved new server certificate to %s\n", serverCertPath)
+	parsedServerCert, _ := x509.ParseCertificate(serverCertDER)
+	logger.Logf("Saved new server certificate to %s. Subject: %s, Issuer: %s, Serial: %s, NotBefore: %s, NotAfter: %s",
+		serverCertPath, parsedServerCert.Subject, parsedServerCert.Issuer, parsedServerCert.SerialNumber, parsedServerCert.NotBefore.Format(time.RFC3339), parsedServerCert.NotAfter.Format(time.RFC3339))
 
 	if err := pathutil.AtomicWriteFile(serverKeyPath, []byte(serverPrivPEM), 0600); err != nil {
 		return nil, nil, fmt.Errorf("failed to save server private key: %w", err)
 	}
-	fmt.Printf("Saved new server private key to %s\n", serverKeyPath)
+	logger.Logf("Saved new server private key to %s", serverKeyPath)
 
 	return serverCertDER, serverPriv, nil
 }
@@ -252,6 +259,8 @@ func SignClientPublicKey(caCertDER []byte, caPriv *ecdsa.PrivateKey, agentID str
 		return nil, fmt.Errorf("failed to create client certificate: %w", err)
 	}
 
+	logger.Logf("Signed client certificate for agent ID: %s. Subject: %s, Issuer: %s, Serial: %s, NotBefore: %s, NotAfter: %s",
+		agentID, template.Subject, caCert.Subject, template.SerialNumber, template.NotBefore.Format(time.RFC3339), template.NotAfter.Format(time.RFC3339))
 	return derBytes, nil
 }
 
