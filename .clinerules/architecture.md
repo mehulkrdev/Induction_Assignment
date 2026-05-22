@@ -254,3 +254,43 @@ The architecture is strictly validated through a TDD (Test-Driven Development) a
     *   Verify the end-to-end flow from enrollment to mTLS reconnection.
     *   Requires a running Go server instance (via Docker Compose) and execution of the Rust test suite on the host.
 *   **Mocking**: Rust tests leverage `mockall` for isolating external dependencies (e.g., Discovery, EnrollmentClient).
+
+
+## Reliability & Security Constraints
+
+* Preserve the CA-based trust model.
+* Preserve strict cryptographic ownership boundaries:
+
+  * Rust agent must never access server private keys.
+  * Go server must never access agent private keys.
+* Focus on graceful runtime handling for:
+
+  * TLS failures
+  * malformed enrollment requests/responses
+  * filesystem/permission failures
+  * corrupted/missing PEM files
+  * retry/backoff handling
+  * connection failures
+  * key/certificate mismatch validation
+
+## Testing Rules
+
+* Extend existing test suites incrementally.
+* Do NOT recreate the testing architecture.
+* Prefer modifying existing test files before creating new ones.
+* Keep tests focused, isolated, and readable.
+* Only add tests for implemented behavior.
+* If a scenario requires new production logic first, implement the runtime handling before adding tests.
+
+## Behavior Expectations
+
+* Fix environment/setup/path issues BEFORE implementation.
+* Verify runtime environment and working directory before executing commands.
+* Ask for clarification if environment setup or workflows are unclear.
+* Keep outputs concise, structured, and implementation-focused.
+* Always report:
+
+  * modified files
+  * commands executed
+  * verification/test results
+  * unresolved blockers (if any)

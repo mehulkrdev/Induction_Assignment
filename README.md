@@ -409,32 +409,45 @@ openssl ecparam -name prime256v1 -genkey -noout -out manual_agent.key
 openssl ec -in manual_agent.key -pubout -out manual_agent.pub
 ```
 
-### B. Prepare Public Key for JSON Payload
+### B. Prepare and Send Enrollment Request
 
-The public key needs to be formatted with escaped newlines to be correctly embedded in a JSON payload for the `curl` request:
-
-```bash
-PUB_KEY=$(awk \'{printf "%s\\n", $0}\' manual_agent.pub)
-```
-
-### C. Enroll Agent via Curl
-
-Send the enrollment request to the server and automatically save the received client certificate to `manual_agent.crt`.
+To avoid complex shell escaping issues with the multiline public key, we use `jq` to build the JSON payload and pipe it directly to `curl`:
 
 ```bash
+# Build JSON payload and enroll in one command
+jq -n --arg agent_id "manual-agent" \
+      --arg token "valid-token" \
+      --arg pubkey "$(cat manual_agent.pub)" \
+      '{agent_id: $agent_id, enrollment_token: $token, public_key: $pubkey}' | \
 curl -sk https://localhost:8443/enroll \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"agent_id\":\"manual-agent\",
-    \"enrollment_token\":\"valid-token\",
-    \"public_key\":\"$PUB_KEY\"
-  }" | jq -r .certificate | sed 's/\\n/\n/g' > manual_agent.crt
+     -H "Content-Type: application/json" \
+     -d @- | jq -r '.certificate' > manual_agent.crt
 ```
+
+*   **Verification**: Ensure `manual_agent.crt` exists and starts with `-----BEGIN CERTIFICATE-----`.
+*   **Troubleshooting**: If `manual_agent.crt` is empty, ensure the Go server is running and port `8443` is accessible.
 
 *   **Verification**: Ensure `manual_agent.crt` exists in your project root and contains a valid PEM-encoded certificate.
 *   **Expected Error Case (Duplicate)**: If an agent with `manual-agent` ID is already enrolled, the server will return an HTTP 409 Conflict. The `curl` command might still execute but save an empty or malformed `manual_agent.crt`.
 
-### D. Verify mTLS Connection
+**Troubleshooting**: If enrollment fails with failed to sign certificate: invalid or empty PEM block containing public key, previously generated keys may be malformed, empty, stale, or in an unsupported format. Delete existing agent keys/certificates and regenerate a fresh EC keypair before retrying enrollment:
+```bash
+rm -f manual_agent.key manual_agent.pub manual_agent.crt
+
+openssl ecparam -name prime256v1 -genkey -noout -out manual_agent.key
+
+openssl ec -in manual_agent.key -pubout -out manual_agent.pub
+```
+**Verification** : Run cat manual_agent.pub and confirm the file contains a PEM block similar to:
+```
+-----BEGIN PUBLIC KEY-----
+...
+-----END PUBLIC KEY-----
+```
+Expected Error Case (Invalid Key Format): If the public key is in OpenSSH format (for example ssh-ed25519 ... or ecdsa-sha2-nistp256 ...) instead of PEM PKIX format, enrollment will fail and the Go server logs will contain:
+failed to sign certificate: invalid or empty PEM block containing public key
+
+### C. Verify mTLS Connection
 
 Test the mutual TLS connection by accessing the secure mTLS endpoint on port `8444` using the generated client certificate and key, and the server's CA certificate.
 
