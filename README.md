@@ -38,7 +38,7 @@ This project operates on a split architecture leveraging the strengths of Window
 
 *   **Go Server (Containerized)**: The Go-based enrollment and mTLS server runs within a Docker container, hosted by WSL2. This provides an isolated, consistent Linux environment for the server and its Certificate Authority (CA). The server dynamically generates its CA and TLS certificates at runtime.
 *   **Rust Agent (Native in WSL)**: The Rust-based agent and its associated tests are designed to run natively within a WSL/Linux terminal. This allows direct interaction with the Dockerized server via `localhost` and simplifies tooling by consolidating all development into a Linux environment.
-*   **Dynamic TLS Certificates**: The server generates a self-signed root CA and server certificates on startup. Client agents enroll by submitting public keys, which the server signs to issue client certificates. The `ca.crt` must be extracted from the running Docker container to establish trust with the server.
+*   **Dynamic TLS Certificates**: The server generates a self-signed root CA and server certificates on startup. Client agents enroll by submitting public keys, which the server signs to issue client certificates. The Rust agent is capable of automatically acquiring the `ca.crt` during the enrollment process, eliminating the need for manual extraction.
 
 ---
 
@@ -500,7 +500,7 @@ This section addresses common issues encountered during setup and execution.
 *   **CA Certificate Mismatch / TLS Handshake Errors**:
     *   **Symptom**: `curl: (60) SSL certificate problem: self signed certificate in certificate chain` or similar TLS errors, especially after restarting the server.
     *   **Cause**: The server\'s CA certificate (`ca.crt`) has changed. This happens when the Docker container is recreated, as the CA is ephemeral.
-    *   **Resolution**: You **must** re-run `docker cp assignment-server-1:/app/data/ca.crt ./data/ca.crt` to extract the *new* `ca.crt` after any server recreation. Ensure agents use this latest CA for trust.
+    *   **Resolution**: The Rust agent automatically acquires the `ca.crt` during enrollment. This troubleshooting step primarily applies to manual verification methods (e.g., `curl`) where a specific `ca.crt` file is provided. For automated agent runs, simply restart the agent to re-acquire the latest `ca.crt`.
 
 *   **`jq` not found**:
     *   **Symptom**: `command not found: jq` during manual enrollment.

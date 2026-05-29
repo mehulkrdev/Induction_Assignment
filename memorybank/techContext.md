@@ -59,7 +59,7 @@
     *   The Go server acts as its own Certificate Authority, generating a self-signed `ca.crt` upon startup.
     *   This `ca.crt` is the root of trust for both the server's own TLS certificate and the client certificates it issues to agents.
 *   **Trust Establishment**:
-    *   The Rust agent trusts the server by validating the server's certificate against the `ca.crt`.
+    *   The Rust agent trusts the server by automatically acquiring and validating the server\\'s certificate against the `ca.crt` during enrollment.
     *   The Go server trusts enrolled agents by validating their client certificates against the same `ca.crt`.
 *   **Cryptographic Ownership Boundaries**:
     *   **Rust Agent**: Generates its own ECDSA P-256 keypair (`agent.key`, `agent.pub`). The `agent.key` is strictly owned by the agent and is never transmitted to the server.

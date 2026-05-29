@@ -27,7 +27,7 @@
     - Rust integration tests (`enrollment_test.rs`) verify the complete flow: Enrollment -> Persistence -> Reconnection (mTLS).
     - Go unit tests (`enrollment_test.go`) verify endpoint validation and certificate signing logic.
 - **Isolated Logging**: Decentralized logging system implemented with separate Go (`server/pkg/logger`) and Rust (`crates/agent_logger`) implementations, maintaining identical log formats and directory structures.
-- **Runtime-Generated TLS Model**: Server dynamically generates CA and TLS certificates on startup, with clear instructions for `ca.crt` extraction.
+- **Runtime-Generated TLS Model**: Server dynamically generates CA and TLS certificates on startup. The Rust agent automatically acquires the `ca.crt`.
 
 ## Known Issues
 

@@ -28,7 +28,7 @@ The system follows a client-server architecture with strict environment separati
 *   Communication uses standard HTTP/TLS protocols.
 
 ### 2. Enrollment Pattern (Certificate-based Trust Bootstrapping)
-*   **Initial Trust (Bootstrapping)**: The Rust agent establishes trust by reading the server-generated `ca.crt`. This root certificate is used to validate the server's certificate during HTTPS enrollment.
+*   **Initial Trust (Bootstrapping)**: The Rust agent establishes trust by automatically acquiring the server-generated `ca.crt` during enrollment. This root certificate is then used to validate the server's certificate during HTTPS enrollment.
 *   **Agent Identity Generation**: Upon initiating enrollment, the agent generates a cryptographically secure ECDSA P-256 keypair (`agent.key` and its corresponding public key).
 *   **Secure Enrollment Request**: The agent sends a POST request to `https://localhost:8443/enroll`. The request body includes an `enrollment_token` (for server authorization), `agent_id`, and the PEM-encoded `public_key`.
 *   **Server Validation and Signing**: The Go server validates the `enrollment_token` using the modular enrollment service in `server/pkg/enrollment`. If authorized, it signs the agent's public key using its internal Certificate Authority (CA) and returns a PEM-encoded client certificate (`agent.crt`).
