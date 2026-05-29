@@ -1,6 +1,7 @@
 use std::path::Path;
+use regex::Regex;
 use std::path::PathBuf;
-use std::process::Command;
+use tokio::process::Command;
 use tokio::time::{Duration};
 
 // Helper to run shell commands and capture output
@@ -13,9 +14,9 @@ pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String>
         Command::new(command)
     };
 
-    let output = cmd.args(args).output().map_err(|e| {
+    let output = cmd.args(args).output().await.map_err(|e| {
         format!(
-            "Failed to execute command '{}' with args {:?}: {}",
+            "Failed to execute command \'{}\'' with args {:?}: {}",
             command, args, e
         )
     })?;
@@ -24,7 +25,7 @@ pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String>
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(format!(
-            "Command '{}' with args {:?} failed with status {}. Stderr: {}\nStdout: {}",
+            "Command \'{}\'' with args {:?} failed with status {}. Stderr: {}\nStdout: {}",
             command,
             args,
             output.status,
@@ -121,7 +122,10 @@ pub async fn extract_ca_cert(temp_dir: &Path, container_id: &str) -> Result<Path
     
     let wsl_dest_path = if cfg!(windows) {
         let path_str = dest_path.to_string_lossy().to_string();
-        path_str.replace("\\", "/").replace("C:", "/mnt/c").replace("c:", "/mnt/c")
+        let re = Regex::new(r"^([A-Za-z]):").unwrap();
+        re.replace_all(&path_str.replace("\\", "/"), |caps: &regex::Captures| {
+            format!("/mnt/{}", caps[1].to_lowercase())
+        }).to_string()
     } else {
         dest_path.to_string_lossy().to_string()
     };

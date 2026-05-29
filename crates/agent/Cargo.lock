@@ -349,6 +349,7 @@ dependencies = [
  "p256",
  "pkcs8",
  "rand_core",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
