@@ -3,6 +3,7 @@ package enrollment
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
@@ -45,8 +46,11 @@ func NewEnrollmentService(caCertDER []byte, caPriv *ecdsa.PrivateKey, serverCert
 // It returns the PEM-encoded client certificate or an error.
 func (es *EnrollmentService) Enroll(agentID, token, publicKey string) (string, error) {
 	// Validate enrollment_token (401 Unauthorized for missing or invalid token)
-	// For simplicity, we hardcode a valid token. In a real system, this would involve a secure token validation service.
-	if token == "" || token != "valid-token" {
+	validToken := os.Getenv("ENROLLMENT_TOKEN")
+	if validToken == "" {
+		return "", fmt.Errorf("server misconfiguration: ENROLLMENT_TOKEN not set")
+	}
+	if token == "" || token != validToken {
 		logger.Logf("Missing or invalid enrollment token: %s", token)
 		return "", fmt.Errorf("missing or invalid enrollment token")
 	}
@@ -57,27 +61,31 @@ func (es *EnrollmentService) Enroll(agentID, token, publicKey string) (string, e
 		return "", fmt.Errorf("missing agent_id")
 	}
 
+	// Hold a write lock for the entire check-sign-mark sequence to prevent TOCTOU race.
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
 	// Check for duplicate AgentID
-	es.mu.RLock()
 	if _, found := es.enrolledAgents[agentID]; found {
-		es.mu.RUnlock()
 		logger.Logf("Duplicate enrollment attempt for AgentID: %s", agentID)
 		return "", fmt.Errorf("agent ID already enrolled")
 	}
-	es.mu.RUnlock()
 
-	logger.Logf("Enrollment successful for AgentID: %s", agentID)
+	// Reserve the slot to block concurrent requests for same ID (in-progress sentinel).
+	// This will be updated to true on success, or deleted on failure.
+	es.enrolledAgents[agentID] = false
 
 	// Sign the public key
 	clientCertDER, err := certutil.SignClientPublicKey(es.caCertDER, es.caPriv, agentID, publicKey)
 	if err != nil {
+		delete(es.enrolledAgents, agentID) // Release reservation on error
 		return "", fmt.Errorf("failed to sign certificate: %w", err)
 	}
 
-	// Mark agent as enrolled after successful certificate issuance
-	es.mu.Lock()
+	// Mark agent as enrolled after successful certificate issuance.
 	es.enrolledAgents[agentID] = true
-	es.mu.Unlock()
+
+	logger.Logf("Enrollment successful for AgentID: %s", agentID)
 
 	clientCertPEM := certutil.EncodeCertToPEM(clientCertDER)
 

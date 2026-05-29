@@ -13,3 +13,4 @@ services:
       - WORKSPACE_ROOT=/app # Explicitly set for container runtime. Do not remove.
       - LOG_ROOT_DIR=/Assignment/Logs
       - AGENT_LOG_DIR=/Assignment/Logs
+      - ENROLLMENT_TOKEN=valid-token
