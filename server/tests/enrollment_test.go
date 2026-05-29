@@ -204,6 +204,26 @@ func TestEnrollmentHandler_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestEnrollmentHandler_RequestTooLarge(t *testing.T) {
+	api := api.NewServerAPI(nil)
+
+	// Create a body larger than 64KB
+	largeBody := make([]byte, 64*1024+1) // 64 KB + 1 byte
+	req := httptest.NewRequest("POST", "/enroll", bytes.NewBuffer(largeBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	api.EnrollmentHandler(rr, req)
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Handler returned wrong status code for large request: got %v want %v",
+			status, http.StatusBadRequest)
+	}
+
+	if !strings.Contains(rr.Body.String(), "request too large") {
+		t.Errorf("Expected error message to contain \"request too large\", got: %s", rr.Body.String())
+	}
+}
+
 func TestEnrollmentHandler_InvalidToken(t *testing.T) {
 	// Setup CA and EnrollmentService for the handler
 	caCertDER, caPriv, err := certutil.GenerateCACert()

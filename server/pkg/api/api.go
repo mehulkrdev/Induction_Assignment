@@ -29,11 +29,12 @@ func (api *ServerAPI) EnrollmentHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024) // 64 KB max
 	var req enrollment.EnrollmentRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		http.Error(w, "Malformed JSON", http.StatusBadRequest)
-		logger.Logf("Malformed JSON: %v", err)
+		http.Error(w, "Malformed JSON or request too large", http.StatusBadRequest)
+		logger.Logf("Malformed JSON or request too large: %v", err)
 		return
 	}
 
