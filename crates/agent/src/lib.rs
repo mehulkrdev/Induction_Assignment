@@ -69,6 +69,7 @@ pub trait EnrollmentClient {
 pub struct Agent {
     pub agent_id: String,
     pub server_url: String,
+    pub mtls_url: String,
     pub certs_path: PathBuf,
     pub ca_cert_path: Option<PathBuf>,
 }
@@ -81,9 +82,11 @@ pub struct AgentTestConfig {
 
 impl Agent {
     pub fn new(agent_id: &str, server_url: &str) -> Self {
+        let mtls_url = server_url.replace(":8443", ":8444");
         Self {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
+            mtls_url,
             certs_path: PathBuf::from("."), // Default to current directory
             ca_cert_path: None,
         }
@@ -91,9 +94,11 @@ impl Agent {
 
     #[cfg(test)]
     pub fn new_with_config(agent_id: &str, server_url: &str, config: AgentTestConfig) -> Self {
+        let mtls_url = server_url.replace(":8443", ":8444");
         Self {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
+            mtls_url,
             certs_path: config.certs_path.unwrap_or_else(|| PathBuf::from(".")),
             ca_cert_path: config.ca_cert_path,
         }
@@ -270,8 +275,7 @@ impl Agent {
 
         let client = cb.build()?;
 
-        let m_tls_url = self.server_url.replace(":8443", ":8444");
-        let secure_url = format!("{}/secure", m_tls_url);
+        let secure_url = format!("{}/secure", self.mtls_url);
 
         let mut attempts = 0;
         let max_attempts = 3;
