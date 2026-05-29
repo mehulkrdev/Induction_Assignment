@@ -357,29 +357,15 @@ The server is dockerized and dynamically generates its own Certificate Authority
     ```
     *You should see `assignment-server-1` running and exposing ports `8443` (Enrollment) and `8444` (mTLS).*
 
-## Step 3 — Extract the CA Certificate
+## Step 3 — Run the Rust Agent (Automated Verification)
 
-The Rust agent and manual `curl` commands require the server's CA certificate to establish trust. Since the CA is dynamically generated, you must extract it from the running container.
+The Rust agent is now capable of automatically acquiring the CA certificate during the enrollment process, eliminating the need for manual extraction. We use the agent\'s built-in integration tests to perform an end-to-end verification of the entire flow: Enrollment -> Certificate Persistence -> mTLS Reconnection.
 
-1.  Create a `data/` directory at the project root if it doesn't exist. This directory is typically `.gitignore`d for ephemeral runtime artifacts:
-    ```bash
-    mkdir -p data
-    ```
-2.  Copy the `ca.crt` from the running `assignment-server-1` container to your local `data/` directory:
-    ```bash
-    docker cp assignment-server-1:/app/data/ca.crt ./data/ca.crt
-    ```
-    *   **Important**: If you stop and restart the server with `--force-recreate`, a *new* CA will be generated. You **must** re-run this `docker cp` command to get the updated `ca.crt`.
-
-## Step 4 — Run the Rust Agent (Automated Verification)
-
-We use the Rust agent's built-in integration tests to perform an end-to-end verification of the entire flow: Enrollment -> Certificate Persistence -> mTLS Reconnection.
-
-1.  Navigate to the agent's crate directory:
+1.  Navigate to the agent\'s crate directory:
     ```bash
     cd crates/agent
     ```
-2.  Run the integration tests. These tests automatically locate `ca.crt` from the project root's `data/` directory using workspace-root resolution logic:
+2.  Run the integration tests. These tests automatically locate `ca.crt` from the project root\'s `data/` directory using workspace-root resolution logic:
     ```bash
     cargo test --test enrollment_test -- --nocapture
     ```
@@ -394,9 +380,9 @@ We use the Rust agent's built-in integration tests to perform an end-to-end veri
     *   `mTLS reconnection successful: Hello verified agent: agent-test`
 *   **Error Handling Tests**: Verify that tests for HTTP 401, 409, and malformed JSON responses pass, indicating robust error handling.
 
-## Step 5 — Manual Verification (Using Curl)
+## Step 4 — Manual Verification (Using Curl)
 
-This section allows you to manually verify the enrollment and mTLS flow using `curl` and `openssl`, bypassing the Rust agent. **Ensure the Go server is running and `ca.crt` has been extracted to `./data/ca.crt` (see Steps 2 & 3) before proceeding.**
+This section allows you to manually verify the enrollment and mTLS flow using `curl` and `openssl`, bypassing the Rust agent. **Ensure the Go server is running and `ca.crt` has been automatically populated in `./data/ca.crt` (see Step 2 & 3) before proceeding.**
 
 Follow these steps from the **project root** (`Assignment/`):
 
@@ -418,10 +404,10 @@ To avoid complex shell escaping issues with the multiline public key, we use `jq
 jq -n --arg agent_id "manual-agent" \
       --arg token "valid-token" \
       --arg pubkey "$(cat manual_agent.pub)" \
-      '{agent_id: $agent_id, enrollment_token: $token, public_key: $pubkey}' | \
+      \'{agent_id: $agent_id, enrollment_token: $token, public_key: $pubkey}\' | \
 curl -sk https://localhost:8443/enroll \
      -H "Content-Type: application/json" \
-     -d @- | jq -r '.certificate' > manual_agent.crt
+     -d @- | jq -r \'.certificate\' > manual_agent.crt
 ```
 
 *   **Verification**: Ensure `manual_agent.crt` exists and starts with `-----BEGIN CERTIFICATE-----`.
@@ -449,7 +435,7 @@ failed to sign certificate: invalid or empty PEM block containing public key
 
 ### C. Verify mTLS Connection
 
-Test the mutual TLS connection by accessing the secure mTLS endpoint on port `8444` using the generated client certificate and key, and the server's CA certificate.
+Test the mutual TLS connection by accessing the secure mTLS endpoint on port `8444` using the generated client certificate and key, and the server\'s CA certificate.
 
 ```bash
 curl -vk https://localhost:8444/secure \
@@ -466,7 +452,7 @@ curl -vk https://localhost:8444/secure \
     *   Server requests client certificate (`Request CERT`).
     *   Client presents its certificate (`Certificate`).
 
-## Step 6 — Cleanup (Optional)
+## Step 5 — Cleanup (Optional)
 
 To stop and remove the Docker containers, and clean up generated certificate files:
 
@@ -503,7 +489,7 @@ This section addresses common issues encountered during setup and execution.
 
 *   **`Error: current directory is not a workspace root` (Rust)**:
     *   **Symptom**: When running `cargo test --test enrollment_test` from the project root (`Assignment/`), Rust fails to find the test.
-    *   **Cause**: The `--test` flag expects to be run from the crate's directory (`crates/agent/`).
+    *   **Cause**: The `--test` flag expects to be run from the crate\'s directory (`crates/agent/`).
     *   **Resolution**: Always navigate into the `crates/agent/` directory before running `cargo test --test enrollment_test`. If running `cargo test --workspace`, you can remain at the project root.
 
 *   **Connection Refused / Server Not Found**:
@@ -513,7 +499,7 @@ This section addresses common issues encountered during setup and execution.
 
 *   **CA Certificate Mismatch / TLS Handshake Errors**:
     *   **Symptom**: `curl: (60) SSL certificate problem: self signed certificate in certificate chain` or similar TLS errors, especially after restarting the server.
-    *   **Cause**: The server's CA certificate (`ca.crt`) has changed. This happens when the Docker container is recreated, as the CA is ephemeral.
+    *   **Cause**: The server\'s CA certificate (`ca.crt`) has changed. This happens when the Docker container is recreated, as the CA is ephemeral.
     *   **Resolution**: You **must** re-run `docker cp assignment-server-1:/app/data/ca.crt ./data/ca.crt` to extract the *new* `ca.crt` after any server recreation. Ensure agents use this latest CA for trust.
 
 *   **`jq` not found**:
@@ -536,7 +522,7 @@ wsl cd crates/agent && cargo test --test enrollment_test -- --nocapture
 ```
 
 *   **Pathing**: Be mindful of Windows vs. Linux pathing. While `wsl` can often translate paths, using Linux paths (`/mnt/c/...`) within WSL is generally more robust for file operations.
-*   **Environment Variables**: Setting environment variables (like `PUB_KEY`) directly in Windows and passing them to WSL commands can be complex. For multi-line variables, running the full command block inside `wsl bash -c "..."` is often easier.
+*   **Environment Variables**: Setting environment variables (like `PUB_KEY`) directly in Windows and passing them to WSL commands can be complex. For multi-line variables, running the full command block inside `wsl bash -c \"...\"` is often easier.
 
 ---
 

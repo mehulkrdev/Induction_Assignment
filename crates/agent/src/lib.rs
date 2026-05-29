@@ -7,8 +7,7 @@ use thiserror::Error;
 use tokio::fs;
 use std::io;
 
-#[macro_use]
-extern crate enrollment_agent_logger;
+use enrollment_agent_logger::log_entry;
 
 
 #[derive(Error, Debug)]
@@ -123,24 +122,24 @@ impl Agent {
 
         // 3. Send request over HTTPS
         let mut cb = reqwest::Client::builder().use_rustls_tls();
-        cb = cb.danger_accept_invalid_certs(true); // Temporary to see if it bypasses the error
 
         let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
         if ca_cert_path.exists() {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
             
             // Log CA certificate details for debugging using the PEM directly
-            if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&ca_cert_pem) {
-                log_entry!("Loaded CA certificate from {}. Subject: {}, Issuer: {}, Serial: {:X}",
-                           ca_cert_path.display(),
-                           x509_cert.tbs_certificate.subject,
-                           x509_cert.tbs_certificate.issuer,
-                           x509_cert.tbs_certificate.serial);
+            if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(&ca_cert_pem) {
+                if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&pem.contents) {
+                    log_entry!("Loaded CA certificate from {}. Subject: {}, Issuer: {}, Serial: {:X}",
+                               ca_cert_path.display(),
+                               x509_cert.tbs_certificate.subject,
+                               x509_cert.tbs_certificate.issuer,
+                               x509_cert.tbs_certificate.serial);
+                } else {
+                    log_entry!("Failed to parse DER from PEM for CA certificate at {}.", ca_cert_path.display());
+                }
             } else {
-                // If it's PEM, we might need to decode it first for x509_parser, 
-                // but reqwest::Certificate::from_pem handles PEM.
-                // For now, just log that we are loading it.
-                log_entry!("Loading CA certificate from {}.", ca_cert_path.display());
+                log_entry!("Failed to parse PEM for CA certificate at {}.", ca_cert_path.display());
             }
 
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
@@ -273,12 +272,18 @@ impl Agent {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
 
             // Log CA certificate details for debugging during mTLS reconnection
-            if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&ca_cert_pem) {
-                log_entry!("Loaded CA certificate from {} for mTLS. Subject: {}, Issuer: {}, Serial: {:X}",
-                           ca_cert_path.display(),
-                           x509_cert.tbs_certificate.subject,
-                           x509_cert.tbs_certificate.issuer,
-                           x509_cert.tbs_certificate.serial);
+            if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(&ca_cert_pem) {
+                if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&pem.contents) {
+                    log_entry!("Loaded CA certificate from {} for mTLS. Subject: {}, Issuer: {}, Serial: {:X}",
+                               ca_cert_path.display(),
+                               x509_cert.tbs_certificate.subject,
+                               x509_cert.tbs_certificate.issuer,
+                               x509_cert.tbs_certificate.serial);
+                } else {
+                    log_entry!("Failed to parse DER from PEM for CA certificate at {} for mTLS.", ca_cert_path.display());
+                }
+            } else {
+                log_entry!("Failed to parse PEM for CA certificate at {} for mTLS.", ca_cert_path.display());
             }
 
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
@@ -297,7 +302,7 @@ impl Agent {
 
         let client = cb.build()?;
 
-        let m_tls_url = self.server_url.replace("8443", "8444");
+        let m_tls_url = self.server_url.replace(":8443", ":8444");
         let secure_url = format!("{}/secure", m_tls_url);
 
         let mut attempts = 0;
