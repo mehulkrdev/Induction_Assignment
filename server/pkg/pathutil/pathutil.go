@@ -2,7 +2,6 @@ package pathutil
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,6 +20,13 @@ func FindWorkspaceRoot() (string, error) {
 		_workspaceRoot, _workspaceRootErr = findWorkspaceRootUncached()
 	})
 	return _workspaceRoot, _workspaceRootErr
+}
+
+// ResetWorkspaceRootForTesting resets the workspace root cache for testing purposes.
+func ResetWorkspaceRootForTesting() {
+	_workspaceRootOnce = sync.Once{}
+	_workspaceRoot = ""
+	_workspaceRootErr = nil
 }
 
 func findWorkspaceRootUncached() (string, error) {
@@ -189,11 +195,17 @@ func GetDataPath() (string, error) {
 // It writes to a temporary file and then renames it to the final destination.
 func AtomicWriteFile(filename string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(filename)
-	tmpFile, err := ioutil.TempFile(dir, "*.tmp")
+	tmpFile, err := os.CreateTemp(dir, "*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name()) // Clean up temp file on exit
+
+	renamed := false
+	defer func() {
+		if !renamed {
+			os.Remove(tmpFile.Name()) // Clean up temp file on failure
+		}
+	}()
 
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
@@ -217,5 +229,6 @@ func AtomicWriteFile(filename string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("failed to rename temporary file to final destination: %w", err)
 	}
 
+	renamed = true
 	return nil
 }
