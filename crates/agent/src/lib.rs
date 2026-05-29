@@ -126,22 +126,6 @@ impl Agent {
         let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
         if ca_cert_path.exists() {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
-            
-            // Log CA certificate details for debugging using the PEM directly
-            if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(&ca_cert_pem) {
-                if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&pem.contents) {
-                    log_entry!("Loaded CA certificate from {}. Subject: {}, Issuer: {}, Serial: {:X}",
-                               ca_cert_path.display(),
-                               x509_cert.tbs_certificate.subject,
-                               x509_cert.tbs_certificate.issuer,
-                               x509_cert.tbs_certificate.serial);
-                } else {
-                    log_entry!("Failed to parse DER from PEM for CA certificate at {}.", ca_cert_path.display());
-                }
-            } else {
-                log_entry!("Failed to parse PEM for CA certificate at {}.", ca_cert_path.display());
-            }
-
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
                 AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
@@ -270,22 +254,6 @@ impl Agent {
         let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
         if ca_cert_path.exists() {
             let ca_cert_pem = fs::read(&ca_cert_path).await?;
-
-            // Log CA certificate details for debugging during mTLS reconnection
-            if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(&ca_cert_pem) {
-                if let Ok((_, x509_cert)) = x509_parser::parse_x509_certificate(&pem.contents) {
-                    log_entry!("Loaded CA certificate from {} for mTLS. Subject: {}, Issuer: {}, Serial: {:X}",
-                               ca_cert_path.display(),
-                               x509_cert.tbs_certificate.subject,
-                               x509_cert.tbs_certificate.issuer,
-                               x509_cert.tbs_certificate.serial);
-                } else {
-                    log_entry!("Failed to parse DER from PEM for CA certificate at {} for mTLS.", ca_cert_path.display());
-                }
-            } else {
-                log_entry!("Failed to parse PEM for CA certificate at {} for mTLS.", ca_cert_path.display());
-            }
-
             let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
                 AgentError::Security(format!(
                     "Failed to parse ca.crt from {}: {}",
