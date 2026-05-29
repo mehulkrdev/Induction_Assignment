@@ -15,7 +15,7 @@
     - Rust agent enhanced with a clear `main.rs` entry point and refined `lib.rs`.
 - **Fully implemented** secure enrollment logic:
     - Rust agent generates ECDSA P-256 keypairs.
-    - Go server validates HMAC-based tokens and signs agent public keys.
+    - Go server validates HMAC-based tokens, enforces CSPRNG for certificate serial numbers, and signs agent public keys (with enrollment request body size limit).
     - Agent persists the issued certificate and private key.
 - **Fully implemented** mTLS communication:
     - Agent uses its certificate and key for authenticated requests on port 8444.
@@ -53,6 +53,8 @@
 - [x] Implemented robust workspace-root resolution logic in Rust tests (`test_helpers.rs`).
 - [x] Refactored Rust agent test cleanup to use explicit async handling, preventing nested Tokio runtime panics.
 - [x] Consolidated documentation into a WSL-first `README.md` and synchronized `memorybank`.
+- [x] Enforced CSPRNG for certificate serial numbers in Go server.
+- [x] Implemented enrollment request body size limit in Go server.
 
 ## Long-Term Direction
 

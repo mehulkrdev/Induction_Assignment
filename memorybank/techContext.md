@@ -27,7 +27,7 @@
 
 - Cargo → Rust build and test
 - Docker → Container runtime for Go server
-- Go → Only inside Docker container
+- Go → Only inside Docker container (note: deprecated `io/ioutil` replaced with `os.ReadFile`)
 - WSL → Linux environment bridge
 - `enrollment_agent_logger` → Rust logging crate (used by agent)
 - `github.com/<your-username>/path/to/Assignment/server/pkg/logger` → Go logging package (used by server)
