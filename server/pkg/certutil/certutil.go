@@ -9,9 +9,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -29,15 +29,13 @@ func (e *PublicKeyError) Error() string {
 }
 
 // generateRandomSerialNumber generates a cryptographically secure random serial number.
-func generateRandomSerialNumber() *big.Int {
+func generateRandomSerialNumber() (*big.Int, error) {
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128) // 2^128
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		// Fallback to time-based for non-critical cases, though crypto/rand should ideally not fail.
-		// In a real production system, this would be a fatal error.
-		return big.NewInt(time.Now().UnixNano())
+		return nil, fmt.Errorf("failed to generate random serial number: %w", err)
 	}
-	return serialNumber
+	return serialNumber, nil
 }
 
 // GenerateCACert generates a self-signed CA certificate and private key.
@@ -47,8 +45,13 @@ func GenerateCACert() ([]byte, *ecdsa.PrivateKey, error) {
 		return nil, nil, fmt.Errorf("failed to generate CA private key: %w", err)
 	}
 
+	serialNumber, err := generateRandomSerialNumber()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate CA certificate serial number: %w", err)
+	}
+
 	template := x509.Certificate{
-		SerialNumber: generateRandomSerialNumber(),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{"Enrollment CA"},
 		},
@@ -73,9 +76,9 @@ func LoadOrCreateCACert(caCertPath string) ([]byte, *ecdsa.PrivateKey, error) {
 	caKeyPath := filepath.Join(filepath.Dir(caCertPath), "ca.key")
 
 	// Try to load existing CA cert and key
-	caCertPEM, err := ioutil.ReadFile(caCertPath)
+	caCertPEM, err := os.ReadFile(caCertPath)
 	if err == nil {
-		caKeyPEM, err := ioutil.ReadFile(caKeyPath)
+		caKeyPEM, err := os.ReadFile(caKeyPath)
 		if err == nil {
 			// Both exist, parse them
 			caCertDERBlock, _ := pem.Decode(caCertPEM)
@@ -143,8 +146,13 @@ func GenerateServerCert(caCertDER []byte, caPriv *ecdsa.PrivateKey) ([]byte, *ec
 		return nil, nil, fmt.Errorf("failed to generate server private key: %w", err)
 	}
 
+	serialNumber, err := generateRandomSerialNumber()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate server certificate serial number: %w", err)
+	}
+
 	template := x509.Certificate{
-		SerialNumber: generateRandomSerialNumber(),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: "localhost",
 		},
@@ -167,9 +175,9 @@ func GenerateServerCert(caCertDER []byte, caPriv *ecdsa.PrivateKey) ([]byte, *ec
 // LoadOrCreateServerCert loads an existing server certificate and key, or generates new ones.
 func LoadOrCreateServerCert(serverCertPath, serverKeyPath string, caCertDER []byte, caPriv *ecdsa.PrivateKey) ([]byte, *ecdsa.PrivateKey, error) {
 	// Try to load existing server cert and key
-	serverCertPEM_bytes, err := ioutil.ReadFile(serverCertPath)
+	serverCertPEM_bytes, err := os.ReadFile(serverCertPath)
 	if err == nil {
-		serverKeyPEM_bytes, err := ioutil.ReadFile(serverKeyPath)
+		serverKeyPEM_bytes, err := os.ReadFile(serverKeyPath)
 		if err == nil {
 			// Both exist, parse them
 			serverCert, err := tls.X509KeyPair(serverCertPEM_bytes, serverKeyPEM_bytes)
@@ -243,8 +251,13 @@ func SignClientPublicKey(caCertDER []byte, caPriv *ecdsa.PrivateKey, agentID str
 		return nil, &PublicKeyError{Message: fmt.Sprintf("failed to parse public key: %v", err)}
 	}
 
+	serialNumber, err := generateRandomSerialNumber()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate client certificate serial number: %w", err)
+	}
+
 	template := x509.Certificate{
-		SerialNumber: generateRandomSerialNumber(),
+		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: agentID,
 		},
