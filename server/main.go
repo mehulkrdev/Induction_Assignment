@@ -113,24 +113,30 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Start servers in goroutines
+	// Start servers in goroutines and use a channel to propagate startup errors
+	errCh := make(chan error, 2)
+
 	go func() {
 		logger.Logf("Enrollment Server starting on port :8443 (HTTPS)")
 		if err := server8443.ListenAndServeTLS(serverCertPath, serverKeyPath); err != nil && err != http.ErrServerClosed {
-			logger.Logf("Enrollment Server failed to start: %v", err)
+			errCh <- fmt.Errorf("enrollment server (8443) failed: %w", err)
 		}
 	}()
 
 	go func() {
 		logger.Logf("mTLS Server starting on port :8444")
 		if err := server8444.ListenAndServeTLS(serverCertPath, serverKeyPath); err != nil && err != http.ErrServerClosed {
-			logger.Logf("mTLS Server failed to start: %v", err)
+			errCh <- fmt.Errorf("mTLS server (8444) failed: %w", err)
 		}
 	}()
 
-	// Wait for interrupt signal
-	<-ctx.Done()
-	logger.Logf("Shutting down servers...")
+	// Wait for interrupt signal or a startup error
+	select {
+	case <-ctx.Done():
+		logger.Logf("Shutting down servers...")
+	case err := <-errCh:
+		return err
+	}
 
 	// Create a deadline to wait for servers to shutdown.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -138,13 +144,13 @@ func run() error {
 
 	_ = server8443.Shutdown(shutdownCtx)
 	_ = server8444.Shutdown(shutdownCtx)
-	logger.Logf("Servers gracefully stopped. Cleaning up log directory.")
-	logger.CleanupLogDir() // Ensure log directory is cleaned up on graceful shutdown
+	logger.Logf("Servers gracefully stopped.")
 	return nil
 }
 
 func main() {
 	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Server exited with error: %v\n", err)
 		logger.Logf("Server exited with error: %v", err)
 		os.Exit(1)
 	}
