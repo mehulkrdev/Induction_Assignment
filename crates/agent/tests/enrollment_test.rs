@@ -36,7 +36,7 @@ async fn test_agent_enroll_valid_token_success() {
     agent.certs_path = temp_dir_path.to_path_buf();
     agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
-        expected_fingerprint: None,
+        expected_fingerprint: server_guard.ca_cert_fingerprint(),
     });
 
     let result = agent.enroll("valid-token").await;
@@ -68,7 +68,7 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     enrollment_agent.certs_path = temp_dir_path.to_path_buf();
     enrollment_agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
-        expected_fingerprint: None,
+        expected_fingerprint: server_guard.ca_cert_fingerprint(),
     });
     enrollment_agent
         .enroll("valid-token")
@@ -84,7 +84,7 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     reconnect_agent.certs_path = temp_dir_path.to_path_buf();
     reconnect_agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path,
-        expected_fingerprint: None,
+        expected_fingerprint: server_guard.ca_cert_fingerprint(),
     });
 
     let reconnect_result = reconnect_agent.reconnect().await;
@@ -97,6 +97,42 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     assert!(reconnect_result
         .unwrap()
         .contains("Hello verified agent: reconnect-agent"));
+
+    server_guard
+        .cleanup()
+        .await
+        .expect("Failed to clean up server");
+}
+
+// Scenario: Agent fails to enroll with a valid token due to CA certificate fingerprint mismatch.
+// Expectation: Enrollment fails with a Security error indicating fingerprint mismatch.
+#[tokio::test]
+#[serial]
+async fn test_agent_enroll_ca_cert_fingerprint_mismatch_fails() {
+    let _guard = logger::set_log_file_for_tests(setup_test_logger());
+
+    let mut server_guard = ServerGuard::new()
+        .await
+        .expect("Failed to start server and extract CA cert");
+    let temp_dir_path = server_guard.temp_dir_path();
+    let ca_cert_path = server_guard.ca_cert_path();
+
+    let mut agent = Agent::new("agent-fingerprint-mismatch", "https://localhost:8443");
+    agent.certs_path = temp_dir_path.to_path_buf();
+    agent.ca_cert_config = Some(CACertConfig {
+        cert_path: ca_cert_path.clone(),
+        expected_fingerprint: Some("incorrect-fingerprint-for-test".to_string()),
+    });
+
+    let result = agent.enroll("valid-token").await;
+
+    assert!(result.is_err(), "Enrollment should have failed due to fingerprint mismatch");
+    let error = result.unwrap_err();
+    assert!(matches!(error, enrollment_agent::AgentError::Security(msg) if msg.contains("CA certificate fingerprint mismatch!") ));
+
+    // Ensure no files were created on failure
+    assert!(!temp_dir_path.join("agent.key").exists(), "agent.key should not exist on failed enrollment");
+    assert!(!temp_dir_path.join("agent.crt").exists(), "agent.crt should not exist on failed enrollment");
 
     server_guard
         .cleanup()

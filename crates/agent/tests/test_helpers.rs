@@ -3,6 +3,8 @@ use regex::Regex;
 use std::path::PathBuf;
 use tokio::process::Command;
 use tokio::time::{Duration};
+use sha2::{Digest, Sha256};
+use hex;
 
 // Helper to run shell commands and capture output
 pub async fn run_command(command: &str, args: &[&str]) -> Result<String, String> {
@@ -139,6 +141,7 @@ pub async fn extract_ca_cert(temp_dir: &Path, container_id: &str) -> Result<Path
 pub struct ServerGuard {
     _temp_dir: tempfile::TempDir,
     ca_cert_path: PathBuf,
+    ca_cert_fingerprint: Option<String>,
 }
 
 impl ServerGuard {
@@ -155,9 +158,14 @@ impl ServerGuard {
         let container_id = get_server_container_id().await?;
         let ca_cert_path = extract_ca_cert(temp_dir.path(), &container_id).await?;
 
+        let ca_cert_pem = tokio::fs::read(&ca_cert_path).await
+            .map_err(|e| format!("Failed to read CA cert for fingerprint calculation: {}", e))?;
+        let ca_cert_fingerprint = calculate_sha256(&ca_cert_pem);
+
         Ok(Self {
             _temp_dir: temp_dir,
             ca_cert_path,
+            ca_cert_fingerprint: Some(ca_cert_fingerprint),
         })
     }
 
@@ -174,4 +182,15 @@ impl ServerGuard {
     pub fn temp_dir_path(&self) -> &Path {
         self._temp_dir.path()
     }
+
+    pub fn ca_cert_fingerprint(&self) -> Option<String> {
+        self.ca_cert_fingerprint.clone()
+    }
+}
+
+fn calculate_sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    hex::encode(result)
 }
