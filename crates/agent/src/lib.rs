@@ -1,6 +1,7 @@
 use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand_core::OsRng;
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -66,18 +67,23 @@ pub trait EnrollmentClient {
     fn enroll(&self, request: EnrollmentRequest) -> Result<EnrollmentResponse, String>;
 }
 
+pub struct CACertConfig {
+    pub cert_path: PathBuf,
+    pub expected_fingerprint: Option<String>,
+}
+
 pub struct Agent {
     pub agent_id: String,
     pub server_url: String,
     pub mtls_url: String,
     pub certs_path: PathBuf,
-    pub ca_cert_path: Option<PathBuf>,
+    pub ca_cert_config: Option<CACertConfig>,
 }
 
 #[cfg(test)]
 pub struct AgentTestConfig {
     pub certs_path: Option<PathBuf>,
-    pub ca_cert_path: Option<PathBuf>,
+    pub ca_cert_config: Option<CACertConfig>,
 }
 
 impl Agent {
@@ -88,7 +94,7 @@ impl Agent {
             server_url: server_url.to_string(),
             mtls_url,
             certs_path: PathBuf::from("."), // Default to current directory
-            ca_cert_path: None,
+            ca_cert_config: None,
         }
     }
 
@@ -100,7 +106,7 @@ impl Agent {
             server_url: server_url.to_string(),
             mtls_url,
             certs_path: config.certs_path.unwrap_or_else(|| PathBuf::from(".")),
-            ca_cert_path: config.ca_cert_path,
+            ca_cert_config: config.ca_cert_config,
         }
     }
 
@@ -128,22 +134,44 @@ impl Agent {
         // 3. Send request over HTTPS
         let mut cb = reqwest::Client::builder().use_rustls_tls();
 
-        let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
-        if ca_cert_path.exists() {
-            let ca_cert_pem = fs::read(&ca_cert_path).await?;
-            let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
-                AgentError::Security(format!(
-                    "Failed to parse ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                ))
-            })?;
+        let ca_cert = match &self.ca_cert_config {
+            Some(config) => {
+                let ca_cert_pem = fs::read(&config.cert_path).await?;
+                if let Some(expected_fingerprint) = &config.expected_fingerprint {
+                    let actual_fingerprint = calculate_sha256(&ca_cert_pem);
+                    if actual_fingerprint != *expected_fingerprint {
+                        return Err(AgentError::Security(format!(
+                            "CA certificate fingerprint mismatch! Expected: {}, Actual: {}",
+                            expected_fingerprint, actual_fingerprint
+                        )));
+                    }
+                }
+                reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
+                    AgentError::Security(format!(
+                        "Failed to parse ca.crt from {}: {}",
+                        config.cert_path.display(),
+                        e
+                    ))
+                })?
+            }
+            None => {
+                let ca_cert_path = self.certs_path.join("ca.crt");
+                if !ca_cert_path.exists() {
+                    log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
+                    return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
+                }
+                let ca_cert_pem = fs::read(&ca_cert_path).await?;
+                reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
+                    AgentError::Security(format!(
+                        "Failed to parse ca.crt from {}: {}",
+                        ca_cert_path.display(),
+                        e
+                    ))
+                })?
+            }
+        };
 
-            cb = cb.add_root_certificate(ca_cert);
-        } else {
-            log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
-            return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
-        }
+        cb = cb.add_root_certificate(ca_cert);
 
         let client = cb.build()?;
 
@@ -256,22 +284,44 @@ impl Agent {
             .use_rustls_tls()
             .identity(identity);
 
-        let ca_cert_path = self.ca_cert_path.clone().unwrap_or_else(|| self.certs_path.join("ca.crt"));
-        if ca_cert_path.exists() {
-            let ca_cert_pem = fs::read(&ca_cert_path).await?;
-            let ca_cert = reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
-                AgentError::Security(format!(
-                    "Failed to parse ca.crt from {}: {}",
-                    ca_cert_path.display(),
-                    e
-                ))
-            })?;
+        let ca_cert = match &self.ca_cert_config {
+            Some(config) => {
+                let ca_cert_pem = fs::read(&config.cert_path).await?;
+                if let Some(expected_fingerprint) = &config.expected_fingerprint {
+                    let actual_fingerprint = calculate_sha256(&ca_cert_pem);
+                    if actual_fingerprint != *expected_fingerprint {
+                        return Err(AgentError::Security(format!(
+                            "CA certificate fingerprint mismatch! Expected: {}, Actual: {}",
+                            expected_fingerprint, actual_fingerprint
+                        )));
+                    }
+                }
+                reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
+                    AgentError::Security(format!(
+                        "Failed to parse ca.crt from {}: {}",
+                        config.cert_path.display(),
+                        e
+                    ))
+                })?
+            }
+            None => {
+                let ca_cert_path = self.certs_path.join("ca.crt");
+                if !ca_cert_path.exists() {
+                    log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
+                    return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
+                }
+                let ca_cert_pem = fs::read(&ca_cert_path).await?;
+                reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
+                    AgentError::Security(format!(
+                        "Failed to parse ca.crt from {}: {}",
+                        ca_cert_path.display(),
+                        e
+                    ))
+                })?
+            }
+        };
 
-            cb = cb.add_root_certificate(ca_cert);
-        } else {
-            log_entry!("ERROR: ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display());
-            return Err(AgentError::Security(format!("ca.crt not found at {}. Cannot establish secure connection without CA certificate.", ca_cert_path.display())));
-        }
+        cb = cb.add_root_certificate(ca_cert);
 
         let client = cb.build()?;
 
@@ -317,4 +367,11 @@ impl Agent {
         log_entry!("mTLS reconnection successful: {}", body);
         Ok(body)
     }
+}
+
+fn calculate_sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    hex::encode(result)
 }

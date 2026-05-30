@@ -1,4 +1,4 @@
-use enrollment_agent::{Agent, EnrollmentRequest, EnrollmentResponse};
+use enrollment_agent::{Agent, EnrollmentRequest, EnrollmentResponse, CACertConfig};
 use enrollment_agent_logger as logger;
 use mockall::{automock, predicate};
 use std::fs::File;
@@ -34,7 +34,10 @@ async fn test_agent_enroll_valid_token_success() {
 
     let mut agent = Agent::new("agent-test", "https://localhost:8443");
     agent.certs_path = temp_dir_path.to_path_buf();
-    agent.ca_cert_path = Some(ca_cert_path.clone()); // Set CA cert path for the agent
+    agent.ca_cert_config = Some(CACertConfig {
+        cert_path: ca_cert_path.clone(),
+        expected_fingerprint: None,
+    });
 
     let result = agent.enroll("valid-token").await;
     assert!(result.is_ok(), "Enrollment failed: {:?}", result.err());
@@ -63,7 +66,10 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     // First, enroll to get valid agent.key and agent.crt
     let mut enrollment_agent = Agent::new("reconnect-agent", "https://localhost:8443");
     enrollment_agent.certs_path = temp_dir_path.to_path_buf();
-    enrollment_agent.ca_cert_path = Some(ca_cert_path.clone());
+    enrollment_agent.ca_cert_config = Some(CACertConfig {
+        cert_path: ca_cert_path.clone(),
+        expected_fingerprint: None,
+    });
     enrollment_agent
         .enroll("valid-token")
         .await
@@ -76,7 +82,10 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     // Now attempt reconnection
     let mut reconnect_agent = Agent::new("reconnect-agent", "https://localhost:8443");
     reconnect_agent.certs_path = temp_dir_path.to_path_buf();
-    reconnect_agent.ca_cert_path = Some(ca_cert_path);
+    reconnect_agent.ca_cert_config = Some(CACertConfig {
+        cert_path: ca_cert_path,
+        expected_fingerprint: None,
+    });
 
     let reconnect_result = reconnect_agent.reconnect().await;
 
