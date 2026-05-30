@@ -22,13 +22,6 @@ func FindWorkspaceRoot() (string, error) {
 	return _workspaceRoot, _workspaceRootErr
 }
 
-// ResetWorkspaceRootForTesting resets the workspace root cache for testing purposes.
-func ResetWorkspaceRootForTesting() {
-	_workspaceRootOnce = sync.Once{}
-	_workspaceRoot = ""
-	_workspaceRootErr = nil
-}
-
 func findWorkspaceRootUncached() (string, error) {
 	initialCwd, err := os.Getwd()
 	if err != nil {
