@@ -104,6 +104,41 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
         .expect("Failed to clean up server");
 }
 
+// Scenario: Agent fails to reconnect because identity files are missing.
+// Expectation: mTLS reconnection fails with a sanitized Security error.
+#[tokio::test]
+#[serial]
+async fn test_agent_reconnect_missing_identity_fails_sanitized() {
+    let _guard = logger::set_log_file_for_tests(setup_test_logger());
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let temp_dir_path = temp_dir.path();
+
+    let agent = Agent::new("missing-identity-agent", "https://localhost:8443");
+    let mut agent = Agent {
+        certs_path: temp_dir_path.to_path_buf(),
+        ..agent
+    };
+    agent.ca_cert_config = Some(CACertConfig {
+        cert_path: temp_dir_path.join("ca.crt"),
+        expected_fingerprint: None,
+    });
+
+    let result = agent.reconnect().await;
+
+    assert!(result.is_err(), "Reconnection should fail when identity files are missing");
+    let error = result.unwrap_err();
+    if let enrollment_agent::AgentError::Security(msg) = error {
+        assert_eq!(msg, "mTLS identity files not found. Please enroll first.");
+        // Verify it does NOT contain the path or file names
+        assert!(!msg.contains("agent.key"));
+        assert!(!msg.contains("agent.crt"));
+        assert!(!msg.contains(temp_dir_path.to_str().unwrap()));
+    } else {
+        panic!("Expected Security error, got {:?}", error);
+    }
+}
+
 // Scenario: Agent fails to enroll with a valid token due to CA certificate fingerprint mismatch.
 // Expectation: Enrollment fails with a Security error indicating fingerprint mismatch.
 #[tokio::test]

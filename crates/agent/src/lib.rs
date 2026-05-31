@@ -254,12 +254,15 @@ impl Agent {
         let agent_crt_path = self.certs_path.join("agent.crt");
 
         if !agent_key_path.exists() || !agent_crt_path.exists() {
-            return Err(AgentError::Security(format!(
-                "Identity files ({}, {}) not found in {}. Enroll first.",
+            log_entry!(
+                "DEBUG: Identity files ({}, {}) not found in {}. Enroll first.",
                 agent_key_path.display(),
                 agent_crt_path.display(),
                 self.certs_path.display()
-            )));
+            );
+            return Err(AgentError::Security(
+                "mTLS identity files not found. Please enroll first.".to_string(),
+            ));
         }
 
         let priv_key_pem = fs::read_to_string(&agent_key_path).await?;
@@ -267,8 +270,10 @@ impl Agent {
 
         let identity = reqwest::Identity::from_pem((cert_pem.clone() + "\n" + &priv_key_pem).as_bytes())
             .map_err(|e| {
-                log_entry!("ERROR: Failed to create identity from agent.key and agent.crt (mismatch or malformed): {}", e);
-                AgentError::Security(format!("Failed to create identity: {}", e))
+                log_entry!("DEBUG: Failed to create identity from agent.key and agent.crt (mismatch or malformed): {:?}", e);
+                AgentError::Security(
+                    "Failed to establish mTLS identity. Check certificate validity.".to_string(),
+                )
             })?;
 
         let mut cb = reqwest::Client::builder()
@@ -288,11 +293,12 @@ impl Agent {
                 }
             }
             reqwest::Certificate::from_pem(&ca_cert_pem).map_err(|e| {
-                AgentError::Security(format!(
-                    "Failed to parse ca.crt from {}: {}",
+                log_entry!(
+                    "DEBUG: Failed to parse ca.crt from {}: {:?}",
                     config.cert_path.display(),
                     e
-                ))
+                );
+                AgentError::Security("Failed to parse CA certificate.".to_string())
             })?
         };
 
