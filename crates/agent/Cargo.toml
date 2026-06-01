@@ -28,3 +28,4 @@ enrollment-agent-logger = { path = "../agent_logger" }
 [dev-dependencies]
 mockall = "0.11"
 serial_test = "3.1"
+predicates = "3.0"

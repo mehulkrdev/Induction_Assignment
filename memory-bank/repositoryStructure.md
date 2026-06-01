@@ -25,7 +25,7 @@ This document outlines the repository structure and the strategy for executing T
 │
 ├── data/                         # (Ignored) Ephemeral runtime data (certs, keys) - created at project root
 │
-├── memorybank/                   # Project documentation and architectural context
+├── memory-bank/                   # Project documentation and architectural context
 │   ├── activeContext.md          # Active development notes and decisions
 │   ├── productContext.md         # Product-level requirements and vision
 │   ├── projectbrief.md           # High-level project summary
