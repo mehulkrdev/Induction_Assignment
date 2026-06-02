@@ -1,0 +1,31 @@
+# Rust build artifacts
+target/
+debug/
+release/
+
+# Go build artifacts
+server/server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Certificates and keys (Sensitive/Generated)
+agent.key
+agent.crt
+agent.pub
+ca.key
+ca.crt
+manual_agent.*
+
+# Environment / Logs / Data
+*.log
+.env
+data/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

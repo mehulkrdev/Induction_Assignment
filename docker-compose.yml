@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   server:
     build:
@@ -8,9 +6,12 @@ services:
     ports:
       - "8443:8443"
       - "8444:8444"
-    networks:
-      - enrollment-net
-
-networks:
-  enrollment-net:
-    driver: bridge
+    volumes:
+      - /mnt/c/Assignment/Logs:/Assignment/Logs
+      - ./data:/app/data
+    environment:
+      - WORKSPACE_ROOT=/app # Explicitly set for container runtime. Do not remove.
+      - LOG_ROOT_DIR=/Assignment/Logs
+      - GO_TEST_DIR=/Assignment/server/tests
+      - AGENT_LOG_DIR=/Assignment/Logs
+      - ENROLLMENT_TOKEN=valid-token

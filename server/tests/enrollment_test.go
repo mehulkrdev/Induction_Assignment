@@ -1,114 +1,258 @@
-package main
+package tests
 
 import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"strings"
+	"sync"
 	"testing"
 
-	"Assignment/logger/server"
-	"Assignment/server/pkg/certutil"
+	"github.com/mehulkrdev/Assignment/server/pkg/api"
+	"github.com/mehulkrdev/Assignment/server/pkg/certutil"
+	"github.com/mehulkrdev/Assignment/server/pkg/enrollment"
+	"github.com/mehulkrdev/Assignment/server/pkg/logger"
 )
 
-func TestMain(m *testing.M) {
-	// Initialize logger for tests
-	logger.InitLogger("test-server")
-
-	// Initialize CA for tests
-	var err error
-	caCertDER, caPriv, err = certutil.GenerateCACert()
-	if err != nil {
-		fmt.Printf("Failed to generate CA: %v\n", err)
-		os.Exit(1)
-	}
-
-	exitCode := m.Run()
-
-	logger.CleanupLogDir()
-	os.Exit(exitCode)
+func init() {
+	logger.InitLogger("server_test")
 }
 
-func TestEnrollmentEndpoint(t *testing.T) {
-	t.Run("Valid Enrollment Request", func(t *testing.T) {
-		// Generate a dummy ECDSA public key for the test
-		priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		pubBytes, _ := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-		pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubBytes}))
+// generateKeyPair generates a new ECDSA private and public key pair.
+func generateKeyPair() (*ecdsa.PrivateKey, string, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to generate private key: %w", err)
+	}
 
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			EnrollmentToken: "valid-token",
-			AgentID:         "agent-1",
-			PublicKey:       pubPEM,
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
+	pubASN1, err := certutil.MarshalPublicKey(priv.Public())
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to marshal public key: %w", err)
+	}
 
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubASN1})
+	return priv, string(pubKeyPEM), nil
+}
 
-		if status := rr.Code; status != http.StatusOK {
-			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+func TestEnrollmentService_Enroll_Success(t *testing.T) {
+	caCertDER, caPriv, err := certutil.GenerateCACert()
+	if err != nil {
+		t.Fatalf("Failed to generate CA: %v", err)
+	}
+
+	es := enrollment.NewEnrollmentService(caCertDER, caPriv, nil, nil)
+
+	_, pubKeyPEM, err := generateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	clientCertPEM, err := es.Enroll("agent123", "valid-token", pubKeyPEM)
+	if err != nil {
+		t.Fatalf("Enrollment failed: %v", err)
+	}
+
+	if clientCertPEM == "" {
+		t.Error("Expected a client certificate, got empty string")
+	}
+}
+
+func TestEnrollmentService_Enroll_DuplicateAgentID(t *testing.T) {
+	caCertDER, caPriv, err := certutil.GenerateCACert()
+	if err != nil {
+		t.Fatalf("Failed to generate CA: %v", err)
+	}
+
+	es := enrollment.NewEnrollmentService(caCertDER, caPriv, nil, nil)
+
+	_, pubKeyPEM, err := generateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	_, err = es.Enroll("agent123", "valid-token", pubKeyPEM)
+	if err != nil {
+		t.Fatalf("First enrollment failed unexpectedly: %v", err)
+	}
+
+	// Second enrollment with the same agent ID should fail
+	_, err = es.Enroll("agent123", "valid-token", pubKeyPEM)
+	if err == nil || err.Error() != "agent ID already enrolled" {
+		t.Errorf("Expected 'agent ID already enrolled' error, got: %v", err)
+	}
+}
+
+func TestEnrollmentService_Enroll_Concurrent(t *testing.T) {
+	caCertDER, caPriv, err := certutil.GenerateCACert()
+	if err != nil {
+		t.Fatalf("Failed to generate CA: %v", err)
+	}
+
+	es := enrollment.NewEnrollmentService(caCertDER, caPriv, nil, nil)
+
+	var wg sync.WaitGroup
+	numAgents := 100
+	errors := make(chan error, numAgents)
+
+	for i := 0; i < numAgents; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			agentID := fmt.Sprintf("agent%d", i)
+			_, pubKeyPEM, err := generateKeyPair()
+			if err != nil {
+				errors <- fmt.Errorf("failed to generate key pair for %s: %w", agentID, err)
+				return
+			}
+			_, err = es.Enroll(agentID, "valid-token", pubKeyPEM)
+			if err != nil && !strings.Contains(err.Error(), "agent ID already enrolled") {
+				errors <- fmt.Errorf("enrollment failed for %s: %w", agentID, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		if err != nil {
+			t.Errorf("Concurrent enrollment error: %v", err)
 		}
+	}
 
-		var resp EnrollmentResponse
-		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-			t.Errorf("failed to decode response: %v", err)
-		}
-		if resp.Status != "success" {
-			t.Errorf("expected status success, got %s", resp.Status)
-		}
-		if resp.Certificate == "" {
-			t.Errorf("expected certificate in response, got empty")
-		}
-	})
+	if len(es.GetEnrolledAgents()) != numAgents {
+		t.Errorf("Expected %d enrolled agents, got %d", numAgents, len(es.GetEnrolledAgents()))
+	}
+}
 
-	t.Run("Malformed JSON", func(t *testing.T) {
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer([]byte(`{"invalid": json`)))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+func TestEnrollmentHandler_Success(t *testing.T) {
+	// Setup CA and EnrollmentService for the handler
+	caCertDER, caPriv, err := certutil.GenerateCACert()
+	if err != nil {
+		t.Fatalf("Failed to generate CA: %v", err)
+	}
+	es := enrollment.NewEnrollmentService(caCertDER, caPriv, nil, nil)
+	serverAPI := api.NewServerAPI(es)
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code for malformed JSON: got %v want %v", status, http.StatusBadRequest)
-		}
-	})
+	// Generate agent key pair
+	_, pubKeyPEM, err := generateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
 
-	t.Run("Missing Enrollment Token", func(t *testing.T) {
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			AgentID:   "agent-1",
-			PublicKey: "key-data",
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+	// Create request body
+	reqBody := enrollment.EnrollmentRequest{
+		AgentID:         "test-agent-1",
+		EnrollmentToken: "valid-token",
+		PublicKey:       pubKeyPEM,
+	}
+	jsonBody, _ := json.Marshal(reqBody)
 
-		if status := rr.Code; status != http.StatusUnauthorized {
-			t.Errorf("handler returned wrong status code for missing token: got %v want %v", status, http.StatusUnauthorized)
-		}
-	})
+	req := httptest.NewRequest("POST", "/enroll", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
 
-	t.Run("Empty Agent ID", func(t *testing.T) {
-		reqBody, _ := json.Marshal(EnrollmentRequest{
-			EnrollmentToken: "valid-token",
-			AgentID:         "",
-			PublicKey:       "key-data",
-		})
-		req, _ := http.NewRequest("POST", "/enroll", bytes.NewBuffer(reqBody))
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(EnrollmentHandler)
-		handler.ServeHTTP(rr, req)
+	rr := httptest.NewRecorder()
+	serverAPI.EnrollmentHandler(rr, req)
 
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code for empty agent ID: got %v want %v", status, http.StatusBadRequest)
-		}
-	})
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("Handler returned wrong status code: got %v want %v, response: %s",
+			status, http.StatusOK, rr.Body.String())
+	}
+
+	var res enrollment.EnrollmentResponse
+	err = json.NewDecoder(rr.Body).Decode(&res)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if res.Status != "success" {
+		t.Errorf("Expected status 'success', got %s", res.Status)
+	}
+	if res.Certificate == "" {
+		t.Error("Expected certificate in response, got empty")
+	}
+}
+
+func TestEnrollmentHandler_InvalidMethod(t *testing.T) {
+	api := api.NewServerAPI(nil)
+	req := httptest.NewRequest("GET", "/enroll", nil)
+	rr := httptest.NewRecorder()
+	api.EnrollmentHandler(rr, req)
+
+	if status := rr.Code; status != http.StatusMethodNotAllowed {
+		t.Errorf("Handler returned wrong status code: got %v want %v",
+			status, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestEnrollmentHandler_MalformedJSON(t *testing.T) {
+	api := api.NewServerAPI(nil)
+	req := httptest.NewRequest("POST", "/enroll", strings.NewReader("invalid json"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	api.EnrollmentHandler(rr, req)
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Handler returned wrong status code: got %v want %v",
+			status, http.StatusBadRequest)
+	}
+}
+
+func TestEnrollmentHandler_RequestTooLarge(t *testing.T) {
+	api := api.NewServerAPI(nil)
+
+	// Create a body larger than 64KB
+	largeBody := make([]byte, 64*1024+1) // 64 KB + 1 byte
+	req := httptest.NewRequest("POST", "/enroll", bytes.NewBuffer(largeBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	api.EnrollmentHandler(rr, req)
+
+	if status := rr.Code; status != http.StatusBadRequest {
+		t.Errorf("Handler returned wrong status code for large request: got %v want %v",
+			status, http.StatusBadRequest)
+	}
+
+	if !strings.Contains(rr.Body.String(), "request too large") {
+		t.Errorf("Expected error message to contain \"request too large\", got: %s", rr.Body.String())
+	}
+}
+
+func TestEnrollmentHandler_InvalidToken(t *testing.T) {
+	// Setup CA and EnrollmentService for the handler
+	caCertDER, caPriv, err := certutil.GenerateCACert()
+	if err != nil {
+		t.Fatalf("Failed to generate CA: %v", err)
+	}
+	es := enrollment.NewEnrollmentService(caCertDER, caPriv, nil, nil)
+	serverAPI := api.NewServerAPI(es)
+
+	// Generate agent key pair
+	_, pubKeyPEM, err := generateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	reqBody := enrollment.EnrollmentRequest{
+		AgentID:         "test-agent-2",
+		EnrollmentToken: "invalid-token", // Invalid token
+		PublicKey:       pubKeyPEM,
+	}
+	jsonBody, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest("POST", "/enroll", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	serverAPI.EnrollmentHandler(rr, req)
+
+	if status := rr.Code; status != http.StatusUnauthorized {
+		t.Errorf("Handler returned wrong status code: got %v want %v",
+			status, http.StatusUnauthorized)
+	}
 }

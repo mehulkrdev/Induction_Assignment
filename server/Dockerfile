@@ -1,33 +1,23 @@
-FROM golang:1.21-bookworm AS builder
+FROM golang:1.22-bookworm
 
 WORKDIR /app
 
-COPY server/go.mod ./server/go.mod
+# Copy module files
+COPY go.mod go.sum ./
 
-WORKDIR /app/server
-
+# Download dependencies
 RUN go mod download
 
-WORKDIR /app
+# Copy server source
+COPY server server
 
-COPY . .
+# Copy necessary third_party assets
+COPY third_party third_party
 
-RUN mkdir -p /app/server/pkg/logger
-COPY logger/server/logger.go /app/server/pkg/logger/logger.go
-
-WORKDIR /app/server
-
-RUN go build -o enrollment-server .
-
-FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY --from=builder /app/server/enrollment-server .
+# Build from the server directory
+RUN go build -o /server_app ./server
 
 EXPOSE 8443
 EXPOSE 8444
 
-CMD ["./enrollment-server"]
+CMD ["/server_app"]
