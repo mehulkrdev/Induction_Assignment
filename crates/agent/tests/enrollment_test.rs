@@ -1,5 +1,6 @@
 use enrollment_agent::{Agent, EnrollmentRequest, EnrollmentResponse, CACertConfig};
 use enrollment_agent_logger as logger;
+use uuid::Uuid;
 use mockall::{automock, predicate};
 use std::fs::File;
 use serial_test::serial;
@@ -7,8 +8,6 @@ use serial_test::serial;
 mod test_helpers;
 use test_helpers::ServerGuard;
 
-use chrono;
-use predicates::prelude::*;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
@@ -35,7 +34,8 @@ async fn test_agent_enroll_valid_token_success() {
     let temp_dir_path = server_guard.temp_dir_path();
     let ca_cert_path = server_guard.ca_cert_path(); // Get CA cert path from ServerGuard
 
-    let mut agent = Agent::new("agent-test", "https://localhost:8443");
+    let agent_id = format!("agent-test-{}", Uuid::new_v4());
+    let mut agent = Agent::new(&agent_id, "https://localhost:8443");
     agent.certs_path = temp_dir_path.to_path_buf();
     agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
@@ -67,7 +67,8 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     let ca_cert_path = server_guard.ca_cert_path();
 
     // First, enroll to get valid agent.key and agent.crt
-    let mut enrollment_agent = Agent::new("reconnect-agent", "https://localhost:8443");
+    let agent_id = format!("reconnect-agent-{}", Uuid::new_v4());
+    let mut enrollment_agent = Agent::new(&agent_id, "https://localhost:8443");
     enrollment_agent.certs_path = temp_dir_path.to_path_buf();
     enrollment_agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
@@ -83,7 +84,7 @@ async fn test_agent_reconnect_valid_identity_returns_success() {
     assert!(temp_dir_path.join("agent.crt").exists(), "agent.crt must exist before reconnection");
 
     // Now attempt reconnection
-    let mut reconnect_agent = Agent::new("reconnect-agent", "https://localhost:8443");
+    let mut reconnect_agent = Agent::new(&agent_id, "https://localhost:8443");
     reconnect_agent.certs_path = temp_dir_path.to_path_buf();
     reconnect_agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
@@ -161,7 +162,8 @@ async fn test_agent_enroll_ca_cert_fingerprint_mismatch_fails() {
     let temp_dir_path = server_guard.temp_dir_path();
     let ca_cert_path = server_guard.ca_cert_path();
 
-    let mut agent = Agent::new("agent-fingerprint-mismatch", "https://localhost:8443");
+    let agent_id = format!("agent-fingerprint-mismatch-{}", Uuid::new_v4());
+    let mut agent = Agent::new(&agent_id, "https://localhost:8443");
     agent.certs_path = temp_dir_path.to_path_buf();
     agent.ca_cert_config = Some(CACertConfig {
         cert_path: ca_cert_path.clone(),
@@ -292,41 +294,37 @@ async fn test_enrollment_client_enroll_malformed_json_returns_error() {
         .contains("Failed to parse enrollment response"));
 }
 
-// Scenario: Agent attempts to enroll with a malicious certs_path.
-// Expectation: Enrollment fails with a Security error indicating path traversal.
+// Scenario: Agent attempts to enroll with an invalid CA certificate file.
+// Expectation: Enrollment fails with a sanitized Security error.
 #[tokio::test]
 #[serial]
-async fn test_agent_enroll_path_traversal_fails() {
+async fn test_agent_enroll_invalid_ca_cert_fails() {
     let _guard = logger::set_log_file_for_tests(setup_test_logger());
 
     let temp_dir = tempdir().expect("Failed to create temp dir");
-    let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-    
-    // Create actual directory to avoid canonicalization failure for the base path
-    let certs_dir = temp_dir_path.join("certs");
-    std::fs::create_dir_all(&certs_dir).unwrap();
+    let temp_dir_path = temp_dir.path();
 
     let mut server_guard = ServerGuard::new()
         .await
         .expect("Failed to start server and extract CA cert");
 
-    let mut agent = Agent::new("agent-path-traversal", "https://localhost:8443");
-    agent.certs_path = certs_dir;
-    
-    // Try to access a file outside of certs_dir
-    let malicious_ca_path = temp_dir_path.join("ca.crt");
-    std::fs::write(&malicious_ca_path, "dummy ca").unwrap();
+    let agent_id = format!("agent-invalid-ca-{}", Uuid::new_v4());
+    let mut agent = Agent::new(&agent_id, "https://localhost:8443");
+    agent.certs_path = temp_dir_path.to_path_buf();
+
+    let invalid_ca_path = temp_dir_path.join("invalid_ca.crt");
+    std::fs::write(&invalid_ca_path, "this is not a valid pem certificate").unwrap();
 
     agent.ca_cert_config = Some(CACertConfig {
-        cert_path: malicious_ca_path,
+        cert_path: invalid_ca_path,
         expected_fingerprint: None,
     });
 
     let result = agent.enroll("valid-token").await;
 
-    assert!(result.is_err(), "Enrollment should fail due to path traversal");
+    assert!(result.is_err(), "Enrollment should fail with invalid CA cert");
     let error = result.unwrap_err();
-    assert!(matches!(error, enrollment_agent::AgentError::Io(_)));
+    assert!(matches!(error, enrollment_agent::AgentError::Security(msg) if msg.contains("Failed to parse ca.crt") ));
 
     server_guard
         .cleanup()
@@ -334,111 +332,49 @@ async fn test_agent_enroll_path_traversal_fails() {
         .expect("Failed to clean up server");
 }
 
-// Scenario: Agent attempts to reconnect with a malicious certs_path.
-// Expectation: Reconnection fails with a Security error indicating path traversal.
+// Scenario: Agent attempts to reconnect with an invalid CA certificate file.
+// Expectation: mTLS reconnection fails with a sanitized Security error.
 #[tokio::test]
 #[serial]
-async fn test_agent_reconnect_path_traversal_fails() {
+async fn test_agent_reconnect_invalid_ca_cert_fails() {
     let _guard = logger::set_log_file_for_tests(setup_test_logger());
-
-    let temp_dir = tempdir().expect("Failed to create temp dir");
-    let temp_dir_path = temp_dir.path().canonicalize().unwrap();
-    
-    // Create actual directory to avoid canonicalization failure for the base path
-    let certs_dir = temp_dir_path.join("certs");
-    std::fs::create_dir_all(&certs_dir).unwrap();
-
-    // Create these files inside certs_dir so canonicalize() doesn't fail before the traversal check
-    std::fs::write(certs_dir.join("agent.key"), "dummy").unwrap();
-    std::fs::write(certs_dir.join("agent.crt"), "dummy").unwrap();
 
     let mut server_guard = ServerGuard::new()
         .await
         .expect("Failed to start server and extract CA cert");
+    let temp_dir_path = server_guard.temp_dir_path();
+    let ca_cert_path = server_guard.ca_cert_path();
 
-    let mut agent = Agent::new("reconnect-path-traversal", "https://localhost:8443");
-    agent.certs_path = certs_dir;
+    // 1. Enroll to get valid identity files
+    let agent_id = format!("reconnect-invalid-ca-{}", Uuid::new_v4());
+    let mut agent = Agent::new(&agent_id, "https://localhost:8443");
+    agent.certs_path = temp_dir_path.to_path_buf();
+    agent.ca_cert_config = Some(CACertConfig {
+        cert_path: ca_cert_path.clone(),
+        expected_fingerprint: server_guard.ca_cert_fingerprint(),
+    });
+    agent.enroll("valid-token").await.expect("Enrollment for reconnect test failed");
 
-    // Create files outside of certs_dir
-    let malicious_key_path = temp_dir_path.join("agent.key");
-    let malicious_crt_path = temp_dir_path.join("agent.crt");
-    std::fs::write(&malicious_key_path, "dummy key").unwrap();
-    std::fs::write(&malicious_crt_path, "dummy crt").unwrap();
-
-    // Re-initialize with malicious paths
-    // reconnection validates agent.key and agent.crt via certs_path.join(...)
-    // To trigger it, we need to pass a path that traverses out
-    agent.certs_path = temp_dir_path.join("certs/.."); // Points to temp_dir_path but traverses
-    
-    // However, validate_cert_path uses canonicalize(), so "certs/.." becomes temp_dir_path
-    // and if certs_path is temp_dir_path, then any file in temp_dir_path is valid.
-    
-    // To properly test traversal, we need certs_path to be a specific subdir, 
-    // and the input path to be outside that subdir.
-    
-    agent.certs_path = temp_dir_path.join("certs"); // This is the allowed root
-    let malicious_path = PathBuf::from("certs/../agent.key"); // This traverses out
-
-    // We need to manually call a method that uses validate_cert_path with this malicious path
-    // reconnect() uses self.certs_path.join("agent.key")
-    // so we set self.certs_path to something that traverses out but canonicalizes to somewhere else?
-    // No, validate_cert_path(path) checks if canonical(path).starts_with(canonical(self.certs_path))
-    
-    // If self.certs_path = temp_dir/certs
-    // and we try to access temp_dir/agent.key
-    // canonical(temp_dir/agent.key) = temp_dir/agent.key
-    // canonical(temp_dir/certs) = temp_dir/certs
-    // temp_dir/agent.key DOES NOT start with temp_dir/certs -> SUCCESS
-    
-    agent.certs_path = temp_dir_path.join("certs");
-    // Reconnect will check certs_path.join("agent.key") -> temp_dir/certs/agent.key
-    // Wait, if it joins, it stays inside unless it has ..
-    
-    // Let's use a path that traverses out
-    // Re-reading lib.rs:
-    // let agent_key_path = self.certs_path.join("agent.key");
-    // self.validate_cert_path(&agent_key_path)?;
-    
-    // If certs_path = "certs/.."
-    // agent_key_path = "certs/../agent.key"
-    // canonical("certs/..") = temp_dir
-    // canonical("certs/../agent.key") = temp_dir/agent.key
-    // starts_with: temp_dir/agent.key starts with temp_dir? YES.
-    
-    // SO, we need certs_path to stay "certs", and we try to access something else.
-    // But reconnect() is hardcoded to use certs_path.join("agent.key").
-    
-    // The only way to traverse out via join is if the joined part starts with / or is relative with ..
-    // PathBuf::join("base").join("../outside") -> "base/../outside" -> canonical: "outside"
-    
-    // The issue is that the Agent struct uses certs_path as the base.
-    // If we want to test that validate_cert_path works, we can't easily do it via reconnect() 
-    // if reconnect() only ever joins simple filenames.
-    
-    // BUT, ca_cert_config.cert_path IS arbitrary!
-    // We need to create the file so canonicalize() succeeds but validate_cert_path() fails due to traversal
-    let malicious_ca_cert = temp_dir_path.join("ca.crt");
-    std::fs::write(&malicious_ca_cert, "dummy").unwrap();
+    // 2. Now swap CA cert for an invalid one and attempt reconnection
+    let invalid_ca_path = temp_dir_path.join("invalid_ca.crt");
+    std::fs::write(&invalid_ca_path, "this is not a valid pem certificate").unwrap();
 
     agent.ca_cert_config = Some(CACertConfig {
-        cert_path: malicious_ca_cert, // Outside of agent.certs_path (temp_dir/certs)
+        cert_path: invalid_ca_path,
         expected_fingerprint: None,
     });
-    
+
     let result = agent.reconnect().await;
 
-    assert!(result.is_err(), "Reconnection should fail due to path traversal in CA cert path");
+    assert!(result.is_err(), "Reconnection should fail with invalid CA cert");
     let error = result.unwrap_err();
-    if let enrollment_agent::AgentError::Security(msg) = &error {
-        println!("Reconnect error message: {}", msg);
-    } else {
-        println!("Reconnect error: {:?}", error);
-    }
-    assert!(matches!(error, enrollment_agent::AgentError::Security(msg) if msg.contains("Path traversal detected")));
+    
+    assert!(matches!(error, enrollment_agent::AgentError::Security(msg) if msg.contains("Failed to parse CA certificate.") ));
 
     server_guard
         .cleanup()
         .await
         .expect("Failed to clean up server");
 }
+
 

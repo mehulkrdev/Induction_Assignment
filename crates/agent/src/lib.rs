@@ -33,6 +33,12 @@ pub enum AgentError {
 
     #[error("Generic error: {0}")]
     Generic(String),
+
+    #[error("URL parse error: {0}")]
+    UrlParse(#[from] url::ParseError),
+
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String),
 }
 
 impl From<String> for AgentError {
@@ -88,11 +94,12 @@ pub struct AgentTestConfig {
 
 impl Agent {
     pub fn new(agent_id: &str, server_url: &str) -> Self {
-        let mtls_url = server_url.replace(":8443", ":8444");
+        // NOTE: We don't change the return type to Result to avoid breaking API changes.
+        // Validation and mTLS URL derivation now happen via build_endpoint_url during use.
         Self {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
-            mtls_url,
+            mtls_url: String::new(), // Deprecated but kept for field compatibility
             certs_path: PathBuf::from("."), // Default to current directory
             ca_cert_config: Some(CACertConfig {
                 cert_path: PathBuf::from(".").join("ca.crt"), // Default CA cert path
@@ -103,18 +110,53 @@ impl Agent {
 
     #[cfg(test)]
     pub fn new_with_config(agent_id: &str, server_url: &str, mut config: AgentTestConfig) -> Self {
-        let mtls_url = server_url.replace(":8443", ":8444");
         let certs_path = config.certs_path.take().unwrap_or_else(|| PathBuf::from("."));
         Self {
             agent_id: agent_id.to_string(),
             server_url: server_url.to_string(),
-            mtls_url,
+            mtls_url: String::new(), // Deprecated but kept for field compatibility
             certs_path: certs_path.clone(),
             ca_cert_config: Some(config.ca_cert_config.take().unwrap_or_else(|| CACertConfig {
                 cert_path: certs_path.join("ca.crt"),
                 expected_fingerprint: None,
             })),
         }
+    }
+
+    /// Centralized URL construction and validation logic.
+    /// Rejects non-8443 ports and uses explicit path construction.
+    fn build_endpoint_url(&self, is_mtls: bool, endpoint: &str) -> Result<url::Url, AgentError> {
+        let mut url = url::Url::parse(&self.server_url)?;
+
+        // Validate port
+        match url.port() {
+            Some(8443) => {
+                if is_mtls {
+                    url.set_port(Some(8444)).map_err(|_| {
+                        AgentError::InvalidUrl("Failed to set mTLS port".to_string())
+                    })?;
+                }
+            }
+            Some(p) => {
+                return Err(AgentError::InvalidUrl(format!(
+                    "Unexpected port: {}. Enrollment server must use port 8443.",
+                    p
+                )));
+            }
+            None => {
+                return Err(AgentError::InvalidUrl(
+                    "Port missing in server URL. Port 8443 is required.".to_string(),
+                ));
+            }
+        }
+
+        // Explicit path construction using path_segments_mut
+        url.path_segments_mut()
+            .map_err(|_| AgentError::InvalidUrl("URL cannot be a base".to_string()))?
+            .clear()
+            .push(endpoint);
+
+        Ok(url)
     }
 
     pub async fn enroll(&self, token: &str) -> Result<(), AgentError> {
@@ -164,17 +206,16 @@ impl Agent {
 
         cb = cb.add_root_certificate(ca_cert);
 
-        let client = cb.build()?;
-
-        let url = format!("{}/enroll", self.server_url);
-
+        // Build the client for enrollment (port 8443)
+        let client_enroll = cb.build()?;
+        let url = self.build_endpoint_url(false, "enroll")?;
         let mut attempts = 0;
         let max_attempts = 3;
         let mut delay = std::time::Duration::from_secs(1);
 
         let res = loop {
             attempts += 1;
-            match client.post(&url).json(&request).send().await {
+            match client_enroll.post(url.clone()).json(&request).send().await {
                 Ok(res) => break Ok(res),
                 Err(e) => {
                     log_entry!(
@@ -304,17 +345,16 @@ impl Agent {
 
         cb = cb.add_root_certificate(ca_cert);
 
-        let client = cb.build()?;
-
-        let secure_url = format!("{}/secure", self.mtls_url);
-
+        // Build the client for reconnection (port 8444, mTLS identity already added)
+        let client_reconnect = cb.build()?;
+        let secure_url = self.build_endpoint_url(true, "secure")?;
         let mut attempts = 0;
         let max_attempts = 3;
         let mut delay = std::time::Duration::from_secs(1);
 
         let res = loop {
             attempts += 1;
-            match client.get(&secure_url).send().await {
+            match client_reconnect.get(secure_url.clone()).send().await {
                 Ok(res) => break Ok(res),
                 Err(e) => {
                     log_entry!("WARNING: mTLS reconnection request failed (attempt {}/{}) for agent {}: {}. Detailed error: {:?}",
@@ -355,4 +395,70 @@ fn calculate_sha256(data: &[u8]) -> String {
     hasher.update(data);
     let result = hasher.finalize();
     hex::encode(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_construction_valid() {
+        let agent = Agent::new("test-agent", "https://localhost:8443");
+        
+        let enroll_url = agent.build_endpoint_url(false, "enroll").unwrap();
+        assert_eq!(enroll_url.as_str(), "https://localhost:8443/enroll");
+        
+        let secure_url = agent.build_endpoint_url(true, "secure").unwrap();
+        assert_eq!(secure_url.as_str(), "https://localhost:8444/secure");
+    }
+
+    #[test]
+    fn test_url_construction_with_trailing_slash() {
+        let agent = Agent::new("test-agent", "https://localhost:8443/");
+        
+        let enroll_url = agent.build_endpoint_url(false, "enroll").unwrap();
+        assert_eq!(enroll_url.as_str(), "https://localhost:8443/enroll");
+        
+        let secure_url = agent.build_endpoint_url(true, "secure").unwrap();
+        assert_eq!(secure_url.as_str(), "https://localhost:8444/secure");
+    }
+
+    #[test]
+    fn test_url_construction_with_path() {
+        // Even if there's a path, build_endpoint_url should clear it
+        let agent = Agent::new("test-agent", "https://localhost:8443/extra/path");
+        
+        let enroll_url = agent.build_endpoint_url(false, "enroll").unwrap();
+        assert_eq!(enroll_url.as_str(), "https://localhost:8443/enroll");
+        
+        let secure_url = agent.build_endpoint_url(true, "secure").unwrap();
+        assert_eq!(secure_url.as_str(), "https://localhost:8444/secure");
+    }
+
+    #[test]
+    fn test_url_construction_invalid_port() {
+        let agent = Agent::new("test-agent", "https://localhost:8080");
+        let result = agent.build_endpoint_url(false, "enroll");
+        assert!(matches!(result, Err(AgentError::InvalidUrl(_))));
+        if let Err(AgentError::InvalidUrl(msg)) = result {
+            assert!(msg.contains("Unexpected port: 8080"));
+        }
+    }
+
+    #[test]
+    fn test_url_construction_missing_port() {
+        let agent = Agent::new("test-agent", "https://localhost");
+        let result = agent.build_endpoint_url(false, "enroll");
+        assert!(matches!(result, Err(AgentError::InvalidUrl(_))));
+        if let Err(AgentError::InvalidUrl(msg)) = result {
+            assert!(msg.contains("Port missing"));
+        }
+    }
+
+    #[test]
+    fn test_url_construction_malformed() {
+        let agent = Agent::new("test-agent", "not a url");
+        let result = agent.build_endpoint_url(false, "enroll");
+        assert!(matches!(result, Err(AgentError::UrlParse(_))));
+    }
 }

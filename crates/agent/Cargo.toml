@@ -25,6 +25,7 @@ webpki-roots = "0.25"
 x509-parser = "0.9"
 
 enrollment-agent-logger = { path = "../agent_logger" }
+uuid = { version = "1.0", features = ["v4"] }
 
 [dev-dependencies]
 mockall = "0.11"
